@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI 沉浸式阅读器 (LingQ Lite)</title>
     
-    <!-- 全局错误捕获：如果白屏，会将错误直接显示在页面上，方便排查 -->
+    <!-- 全局错误捕获 -->
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             var errorDiv = document.getElementById('js-error-log');
@@ -20,7 +20,7 @@
         };
     </script>
 
-    <!-- --- 核心配置：使用 unpkg 官方源 (需科学上网) --- -->
+    <!-- --- 核心配置：使用 unpkg 官方源 (兼容性最好，需代理) --- -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -41,13 +41,11 @@
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
     
-    <!-- 修复：去掉了 flex items-center 等居中样式，防止主界面被挤压 -->
     <div id="root" class="h-full w-full">
-        <!-- 纯 CSS 加载提示，不依赖 JS，确保白屏时能看到东西 -->
+        <!-- 纯 CSS 加载提示 -->
         <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #666;">
             <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite;"></div>
             <p style="margin-top: 10px; font-size: 14px;">正在加载资源...</p>
-            <p style="font-size: 12px; color: #999;">如果长时间不动，请检查网络或刷新</p>
         </div>
     </div>
 
@@ -55,7 +53,6 @@
         const { useState, useEffect, useRef } = React;
 
         // --- 图标组件 ---
-        // 修复：保留 overflow: visible 防止图标显示不全
         const Icon = ({ size = 24, className = "", children, fill = "none" }) => (
             <svg 
                 xmlns="http://www.w3.org/2000/svg" 
@@ -84,13 +81,11 @@
         const FileText = (props) => <Icon {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></Icon>;
         const Trash2 = (props) => <Icon {...props}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></Icon>;
         const RefreshCw = (props) => <Icon {...props}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
-        const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.2 1.3L3 12l5.9 1.9a2 2 0 0 1 1.2 1.3L12 21l1.9-5.8a2 2 0 0 1 1.2-1.3L12 3z"/></Icon>;
+        const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.2 1.3L3 12l5.9 1.9a2 2 0 0 1 1.2 1.3L12 21l1.9-5.8a2 2 0 0 1 1.2-1.3L21 12l-5.9-1.9a2 2 0 0 1-1.2-1.3L12 3z"/></Icon>;
         const Zap = (props) => <Icon {...props}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></Icon>;
 
-        // 默认设置
         const DEFAULT_API_URL = "https://api.siliconflow.cn/v1/chat/completions";
         
-        // 语言配置
         const LANG_CONFIG = {
             'en': { name: 'English', code: 'en-US', label: '英语', dictCode: 'eng' },
             'fr': { name: 'French', code: 'fr-FR', label: '法语', dictCode: 'fr' },
@@ -114,7 +109,6 @@
             const [isTranslating, setIsTranslating] = useState(false);
             const [isGenerating, setIsGenerating] = useState(false);
             const [contextSentence, setContextSentence] = useState("");
-            
             const [cacheProgress, setCacheProgress] = useState(0);
             
             const fileInputRef = useRef(null);
@@ -144,24 +138,19 @@
                 const wordsToLoad = uniqueWords.slice(0, 60); 
                 const total = wordsToLoad.length;
                 let loaded = 0;
-
                 if (total === 0) return;
-
                 const loadNextBatch = async (index) => {
                     if (index >= total) {
                         setCacheProgress(100);
                         setTimeout(() => setCacheProgress(0), 2000); 
                         return;
                     }
-
                     const batchSize = 5;
                     const batch = wordsToLoad.slice(index, index + batchSize);
-                    
                     batch.forEach(word => {
                         const url = getAudioUrl(word);
                         const a = new Audio(url);
                     });
-
                     loaded += batch.length;
                     setCacheProgress(Math.floor((loaded / total) * 100));
                     setTimeout(() => loadNextBatch(index + batchSize), 200);
@@ -195,7 +184,6 @@
                 };
 
                 playOnlineAudio().catch(() => {
-                    console.log("Network audio failed, falling back to Native TTS");
                     if (!window.speechSynthesis) return;
                     window.speechSynthesis.cancel();
                     const utterance = new SpeechSynthesisUtterance(word);
@@ -207,14 +195,12 @@
             const handleFileSelect = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-
                 if (parsedWords.length > 0) {
                     if (!window.confirm("当前已有导入的文章，确认要覆盖吗？")) {
                         e.target.value = '';
                         return;
                     }
                 }
-
                 processFile(file);
                 e.target.value = '';
             };
@@ -286,6 +272,7 @@
                 }
             };
 
+            // --- 关键修复：翻译逻辑更新 ---
             const translateWord = async (word, context) => {
                 setIsTranslating(true);
                 setTranslation("");
@@ -297,7 +284,15 @@
                 }
 
                 try {
-                    const prompt = `Translate "${word}" to Simplified Chinese concisely based on context: "...${context}...". No explanations.`;
+                    // 修改 Prompt，强制要求 AI 充当词典，只翻译单词
+                    const prompt = `
+                    Role: Dictionary.
+                    Context: "...${context}..."
+                    Target Word: "${word}"
+                    Task: Translate the "Target Word" into Simplified Chinese. Use the context ONLY to select the correct meaning (e.g., bank as river vs financial).
+                    Constraint: Output ONLY the definition of the word. Do NOT translate the whole sentence.
+                    Format: [Part of Speech] Meaning. (e.g., [n.] 苹果)
+                    `;
 
                     const response = await fetch(DEFAULT_API_URL, {
                         method: 'POST',
@@ -308,7 +303,7 @@
                         body: JSON.stringify({
                             model: model,
                             messages: [{ role: "user", content: prompt }],
-                            temperature: 0.3,
+                            temperature: 0.1, // 降低温度，让回答更精确死板
                             max_tokens: 60
                         })
                     });
@@ -364,7 +359,6 @@
                 }
             };
 
-            // 修复：确保 App 容器占满全宽
             return (
                 <div className="flex flex-col h-full w-full bg-gray-50">
                     <header className="bg-white shadow-sm p-3 flex justify-between items-center z-10 shrink-0 border-b border-gray-200 relative">
