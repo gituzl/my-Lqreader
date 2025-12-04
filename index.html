@@ -291,6 +291,7 @@
                 }
             };
 
+            // --- 单词翻译 ---
             const translateWord = async (word, context) => {
                 setIsTranslating(true);
                 setTranslation("");
@@ -302,7 +303,10 @@
                 }
 
                 try {
-                    const prompt = `Explain "${word}" concisely in Simplified Chinese. Context: "...${context}...". No markdown.`;
+                    // Optimized Prompt: Stronger instruction to translate ONLY the word, but use context for disambiguation.
+                    // Reduced max_tokens and temperature for speed.
+                    const prompt = `Translate the word "${word}" into Simplified Chinese based on this context: "...${context}...". \n\nRules:\n1. Translate ONLY the word "${word}", NOT the whole sentence.\n2. Output JUST the Chinese meaning (no pinyin, no extra words).`;
+                    
                     const apiUrl = config.transUrl.endsWith('/chat/completions') ? config.transUrl : `${config.transUrl}/chat/completions`;
 
                     const response = await fetch(apiUrl, {
@@ -310,9 +314,12 @@
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.transKey}` },
                         body: JSON.stringify({
                             model: config.transModel,
-                            messages: [{ role: "user", content: prompt }],
-                            temperature: 0.3,
-                            max_tokens: 60
+                            messages: [
+                                { role: "system", content: "You are a concise dictionary helper." },
+                                { role: "user", content: prompt }
+                            ],
+                            temperature: 0.1,
+                            max_tokens: 30
                         })
                     });
 
