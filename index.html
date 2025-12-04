@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 沉浸式阅读器 (极速修正版)</title>
+    <title>AI 沉浸式阅读器 (稳定修复版)</title>
     
-    <!-- 优化1: 预连接音频服务器，减少首次点击的握手时间 -->
+    <!-- 预连接音频源，加速握手 -->
     <link rel="preconnect" href="https://dict.youdao.com" crossorigin>
     <link rel="dns-prefetch" href="https://dict.youdao.com">
 
@@ -28,10 +28,8 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
         .word-span { cursor: pointer; border-radius: 4px; padding: 0 2px; transition: all 0.05s; display: inline-block; }
         .word-span:hover { background-color: #e5e7eb; }
-        /* 点击态更明显 */
         .word-span:active { background-color: #fde047; transform: scale(0.98); }
         .word-span.active { background-color: #fde047; color: #000; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -67,6 +65,7 @@
         const RefreshCw = (props) => <Icon {...props}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
         const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.2 1.3L3 12l5.9 1.9a2 2 0 0 1 1.2 1.3L12 21l1.9-5.8a2 2 0 0 1 1.2-1.3L12 3z"/></Icon>;
         const Settings = (props) => <Icon {...props}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
+        const Volume2 = (props) => <Icon {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></Icon>;
 
         const DEFAULT_API_URL = "https://api.siliconflow.cn/v1/chat/completions";
         
@@ -93,43 +92,38 @@
             const [isTranslating, setIsTranslating] = useState(false);
             const [isGenerating, setIsGenerating] = useState(false);
             const [contextSentence, setContextSentence] = useState("");
+            const [isPlaying, setIsPlaying] = useState(false); // UI反馈
             
             const fileInputRef = useRef(null);
             const translationCacheRef = useRef(new Map());
             const abortControllerRef = useRef(null);
             
-            // --- 核心修复：使用可丢弃的音频实例 ---
-            // 不再使用单例 playerRef.current，而是每次都 new Audio
-            // currentAudioRef 仅用于保存当前正在播放的那个实例，以便点击新词时销毁它
-            const currentAudioRef = useRef(null);
-            
-            // 防止竞态的 ID
+            // --- 核心修复：单例音频 + 强行重置 ---
+            const playerRef = useRef(null);
             const clickIdRef = useRef(0);
+            const timeoutRef = useRef(null);
 
             useEffect(() => {
+                // 初始化唯一 Audio 实例
+                playerRef.current = new Audio();
+                // 绑定结束事件，用于更新UI
+                playerRef.current.onended = () => setIsPlaying(false);
+                playerRef.current.onpause = () => setIsPlaying(false);
+                playerRef.current.onplay = () => setIsPlaying(true);
+
                 const storedKey = localStorage.getItem('lingq_api_key');
                 const storedModel = localStorage.getItem('lingq_model');
                 if (storedKey) setApiKey(storedKey);
                 if (storedModel) setModel(storedModel);
 
                 return () => {
-                    // 卸载时清理
-                    stopCurrentAudio();
+                    if (playerRef.current) {
+                        playerRef.current.pause();
+                        playerRef.current.src = "";
+                    }
+                    if (window.speechSynthesis) window.speechSynthesis.cancel();
                 };
             }, []);
-
-            const stopCurrentAudio = () => {
-                if (window.speechSynthesis) window.speechSynthesis.cancel();
-                if (currentAudioRef.current) {
-                    try {
-                        currentAudioRef.current.pause();
-                        currentAudioRef.current.src = ""; // 关键：断开网络连接
-                        currentAudioRef.current = null;
-                    } catch (e) {
-                        // 忽略清理错误
-                    }
-                }
-            };
 
             const parseText = (rawText, name = "Imported Text") => {
                 const tokens = rawText.split(/([ \t\n\r,.?!;:"'()\[\]\—\-]+)/).filter(t => t);
@@ -143,8 +137,7 @@
 
             const getAudioUrl = (word) => {
                 const dictCode = LANG_CONFIG[currentLang].dictCode;
-                // 优化3: 移除时间戳 ts=${Date.now()}
-                // 允许浏览器缓存 MP3 文件。第一次加载后，第二次点击将是 0ms 延迟。
+                // 不加时间戳，利用浏览器缓存加速
                 if (currentLang === 'en') {
                     return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
                 } else {
@@ -152,54 +145,74 @@
                 }
             };
 
-            // --- 终极发音逻辑：创建新实例 + 强制销毁旧实例 ---
+            // --- 稳健发音逻辑 V4 ---
             const speakWord = (word) => {
-                // 1. 生成本次点击的唯一 ID
+                const player = playerRef.current;
+                if (!player) return;
+
+                // 1. 生成 ID，锁定当前操作
                 const thisClickId = Date.now();
                 clickIdRef.current = thisClickId;
 
-                // 2. 立即“物理”销毁上一个声音
-                stopCurrentAudio();
+                // 2. 物理重置：停止 TTS，停止 Player，断开网络
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                player.pause();
+                player.currentTime = 0;
+                player.src = ""; // 关键：置空源
+                player.load();   // 关键：强制浏览器丢弃缓冲
 
-                // 3. 创建全新的 Audio 对象 (避免复用导致的 ReadyState 锁死)
+                if (timeoutRef.current) clearTimeout(timeoutRef.current);
+                setIsPlaying(true); // UI 立即响应
+
+                // 3. 设置新源
                 const url = getAudioUrl(word);
-                const newAudio = new Audio(url);
-                currentAudioRef.current = newAudio; // 存起来，以便下次点击时销毁它
-
-                // 4. 播放
-                const playPromise = newAudio.play();
+                player.src = url;
+                
+                // 4. 播放 (带错误捕获)
+                const playPromise = player.play();
                 
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
-                        // 只有当 ID 匹配（说明用户没点新词）且非中断错误时，才处理
-                        if (clickIdRef.current === thisClickId && error.name !== 'AbortError') {
-                            console.log("Network play failed, fallback to TTS");
-                            fallbackTTS(word);
+                        // 只有当 ID 没变（说明没有点击新词）时，才处理错误
+                        if (clickIdRef.current === thisClickId) {
+                            if (error.name !== 'AbortError') {
+                                console.log("Network play failed, fallback to TTS");
+                                fallbackTTS(word);
+                            }
                         }
                     });
                 }
 
-                // 5. 超时降级 (缩短到 1s)
-                setTimeout(() => {
-                    // 如果 ID 还没变（用户没点别的），且 readyState 还没准备好
+                // 5. 超时险 (800ms) - 极速降级
+                timeoutRef.current = setTimeout(() => {
                     if (clickIdRef.current === thisClickId) {
-                        // 如果还在加载中
-                        if (newAudio.readyState < 2) {
-                            console.log("Network timeout, switching to TTS");
-                            // 再次销毁网络请求
-                            newAudio.src = "";
+                        // 如果还在缓冲（readyState < 3），不等了，直接切 TTS
+                        if (player.readyState < 3) {
+                            console.log("Network timeout (800ms), switching to TTS");
+                            player.src = ""; // 断开
                             fallbackTTS(word);
                         }
                     }
-                }, 1000);
+                }, 800);
             };
 
             const fallbackTTS = (word) => {
-                if (!window.speechSynthesis) return;
+                // 双重检查 ID，防止声音乱入
+                if (clickIdRef.current !== clickIdRef.current) return;
+                
+                if (!window.speechSynthesis) {
+                    setIsPlaying(false);
+                    return;
+                }
+                
                 window.speechSynthesis.cancel();
                 const utterance = new SpeechSynthesisUtterance(word);
                 utterance.lang = LANG_CONFIG[currentLang].code;
                 utterance.rate = 1.0; 
+                
+                utterance.onend = () => setIsPlaying(false);
+                utterance.onerror = () => setIsPlaying(false);
+                
                 window.speechSynthesis.speak(utterance);
             };
 
@@ -220,7 +233,6 @@
                     return;
                 }
 
-                // 翻译请求中断
                 if (abortControllerRef.current) {
                     abortControllerRef.current.abort();
                 }
@@ -267,8 +279,6 @@
                 if (!/[a-zA-Z0-9\u00C0-\u024F\u0400-\u04FF]/.test(word)) return;
 
                 setSelectedWord({ word, index });
-                
-                // 立即执行发音
                 speakWord(word); 
 
                 const start = Math.max(0, index - 8);
@@ -368,7 +378,7 @@
                         <div className="flex items-center gap-2 overflow-hidden">
                             <BookOpen className="text-blue-600 shrink-0" />
                             <div className="flex flex-col">
-                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">Speed</span></h1>
+                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">V4</span></h1>
                                 {fileName && <span className="text-xs text-gray-500 truncate max-w-[150px]">{fileName}</span>}
                             </div>
                         </div>
@@ -422,7 +432,17 @@
                                     <div className="flex-1 mr-4">
                                         <h3 className="text-xl font-bold text-blue-800 flex items-center gap-3">
                                             {selectedWord.word}
-                                            <button onClick={() => speakWord(selectedWord.word)} className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded-full text-blue-600 transition"><Play size={16} fill="currentColor" /></button>
+                                            <button onClick={() => speakWord(selectedWord.word)} className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded-full text-blue-600 transition">
+                                                {isPlaying ? (
+                                                    <span className="flex gap-0.5 items-end h-4 w-4 justify-center pb-0.5">
+                                                        <span className="w-1 bg-current animate-[bounce_1s_infinite] h-2"></span>
+                                                        <span className="w-1 bg-current animate-[bounce_1s_infinite_0.2s] h-3"></span>
+                                                        <span className="w-1 bg-current animate-[bounce_1s_infinite_0.4s] h-1.5"></span>
+                                                    </span>
+                                                ) : (
+                                                    <Volume2 size={16} fill="currentColor" />
+                                                )}
+                                            </button>
                                         </h3>
                                         <p className="text-xs text-gray-400 mt-1 line-clamp-1 italic">...{contextSentence}...</p>
                                     </div>
