@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 沉浸式阅读器 (极速响应版)</title>
+    <title>AI 沉浸式阅读器 (极速修正版)</title>
     
+    <!-- 优化1: 预连接音频服务器，减少首次点击的握手时间 -->
+    <link rel="preconnect" href="https://dict.youdao.com" crossorigin>
+    <link rel="dns-prefetch" href="https://dict.youdao.com">
+
     <!-- 全局错误捕获 -->
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
@@ -22,9 +26,12 @@
 
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-        .word-span { cursor: pointer; border-radius: 4px; padding: 0 2px; transition: all 0.1s; display: inline-block; }
+        .word-span { cursor: pointer; border-radius: 4px; padding: 0 2px; transition: all 0.05s; display: inline-block; }
         .word-span:hover { background-color: #e5e7eb; }
+        /* 点击态更明显 */
+        .word-span:active { background-color: #fde047; transform: scale(0.98); }
         .word-span.active { background-color: #fde047; color: #000; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -51,7 +58,6 @@
             </svg>
         );
         const BookOpen = (props) => <Icon {...props}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></Icon>;
-        const Settings = (props) => <Icon {...props}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
         const Play = (props) => <Icon {...props}><polygon points="5 3 19 12 5 21 5 3"/></Icon>;
         const CheckCircle = (props) => <Icon {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>;
         const AlertCircle = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>;
@@ -60,6 +66,7 @@
         const Trash2 = (props) => <Icon {...props}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></Icon>;
         const RefreshCw = (props) => <Icon {...props}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
         const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.2 1.3L3 12l5.9 1.9a2 2 0 0 1 1.2 1.3L12 21l1.9-5.8a2 2 0 0 1 1.2-1.3L12 3z"/></Icon>;
+        const Settings = (props) => <Icon {...props}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
 
         const DEFAULT_API_URL = "https://api.siliconflow.cn/v1/chat/completions";
         
@@ -88,33 +95,41 @@
             const [contextSentence, setContextSentence] = useState("");
             
             const fileInputRef = useRef(null);
-            
-            // --- 优化1：请求中断控制器 (解决翻译慢) ---
             const translationCacheRef = useRef(new Map());
             const abortControllerRef = useRef(null);
             
-            // --- 优化2：音频请求令牌 (解决发音重叠/卡顿) ---
-            const playerRef = useRef(null);
-            const timeoutRef = useRef(null);
-            // 关键变量：给每次点击分配一个 ID，如果 ID 变了，说明旧的请求作废
-            const audioRequestId = useRef(0);
+            // --- 核心修复：使用可丢弃的音频实例 ---
+            // 不再使用单例 playerRef.current，而是每次都 new Audio
+            // currentAudioRef 仅用于保存当前正在播放的那个实例，以便点击新词时销毁它
+            const currentAudioRef = useRef(null);
+            
+            // 防止竞态的 ID
+            const clickIdRef = useRef(0);
 
             useEffect(() => {
-                playerRef.current = new Audio();
-                
                 const storedKey = localStorage.getItem('lingq_api_key');
                 const storedModel = localStorage.getItem('lingq_model');
                 if (storedKey) setApiKey(storedKey);
                 if (storedModel) setModel(storedModel);
 
                 return () => {
-                    if (playerRef.current) {
-                        playerRef.current.pause();
-                        playerRef.current.src = "";
-                    }
-                    if (window.speechSynthesis) window.speechSynthesis.cancel();
+                    // 卸载时清理
+                    stopCurrentAudio();
                 };
             }, []);
+
+            const stopCurrentAudio = () => {
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                if (currentAudioRef.current) {
+                    try {
+                        currentAudioRef.current.pause();
+                        currentAudioRef.current.src = ""; // 关键：断开网络连接
+                        currentAudioRef.current = null;
+                    } catch (e) {
+                        // 忽略清理错误
+                    }
+                }
+            };
 
             const parseText = (rawText, name = "Imported Text") => {
                 const tokens = rawText.split(/([ \t\n\r,.?!;:"'()\[\]\—\-]+)/).filter(t => t);
@@ -128,84 +143,67 @@
 
             const getAudioUrl = (word) => {
                 const dictCode = LANG_CONFIG[currentLang].dictCode;
-                // 添加时间戳防止浏览器强缓存导致的音频加载卡死
-                const ts = Date.now();
+                // 优化3: 移除时间戳 ts=${Date.now()}
+                // 允许浏览器缓存 MP3 文件。第一次加载后，第二次点击将是 0ms 延迟。
                 if (currentLang === 'en') {
-                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2&ts=${ts}`;
+                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
                 } else {
-                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&le=${dictCode}&ts=${ts}`;
+                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&le=${dictCode}`;
                 }
             };
 
-            // --- 核心逻辑：极速发音 (支持强力打断) ---
+            // --- 终极发音逻辑：创建新实例 + 强制销毁旧实例 ---
             const speakWord = (word) => {
-                const player = playerRef.current;
-                if (!player) return;
+                // 1. 生成本次点击的唯一 ID
+                const thisClickId = Date.now();
+                clickIdRef.current = thisClickId;
 
-                // 1. 生成新的请求令牌 (ID)
-                // 只要生成了新 ID，旧的播放逻辑中的回调函数就会因为 ID 不匹配而自动放弃执行
-                const currentId = Date.now();
-                audioRequestId.current = currentId;
+                // 2. 立即“物理”销毁上一个声音
+                stopCurrentAudio();
 
-                // 2. 立即“物理”静音
-                // 不管上一个单词读到哪，立刻停掉
-                if (window.speechSynthesis) window.speechSynthesis.cancel();
-                player.pause();
-                player.currentTime = 0;
-                player.src = ""; // 显式置空，强制断开网络连接
-                
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-                // 3. 开始加载新音频
+                // 3. 创建全新的 Audio 对象 (避免复用导致的 ReadyState 锁死)
                 const url = getAudioUrl(word);
-                player.src = url;
-                player.load(); // 强制浏览器重新加载
+                const newAudio = new Audio(url);
+                currentAudioRef.current = newAudio; // 存起来，以便下次点击时销毁它
 
-                // 4. 尝试播放网络音频
-                const playPromise = player.play();
+                // 4. 播放
+                const playPromise = newAudio.play();
+                
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
-                        // 只有当 ID 匹配（即这是最新一次点击）时，才处理错误
-                        // 如果 ID 不匹配，说明用户已经点了别的词，这个错误是预期的（AbortError），忽略即可
-                        if (audioRequestId.current === currentId) {
-                            // 排除用户手动打断的情况，如果是真的网络错误，降级到 TTS
-                            if (error.name !== 'AbortError') {
-                                console.log("Network play failed, fallback to TTS");
-                                fallbackTTS(word);
-                            }
+                        // 只有当 ID 匹配（说明用户没点新词）且非中断错误时，才处理
+                        if (clickIdRef.current === thisClickId && error.name !== 'AbortError') {
+                            console.log("Network play failed, fallback to TTS");
+                            fallbackTTS(word);
                         }
                     });
                 }
 
-                // 5. 超时保险机制 (1.2秒)
-                // 如果网络音频 1.2秒 还没出来，不要干等，直接切本地 TTS
-                timeoutRef.current = setTimeout(() => {
-                    if (audioRequestId.current === currentId) {
-                        // readyState < 2 表示还没缓冲够播放的数据
-                        if (player.readyState < 2) { 
+                // 5. 超时降级 (缩短到 1s)
+                setTimeout(() => {
+                    // 如果 ID 还没变（用户没点别的），且 readyState 还没准备好
+                    if (clickIdRef.current === thisClickId) {
+                        // 如果还在加载中
+                        if (newAudio.readyState < 2) {
                             console.log("Network timeout, switching to TTS");
-                            player.src = ""; // 停止下载
+                            // 再次销毁网络请求
+                            newAudio.src = "";
                             fallbackTTS(word);
                         }
                     }
-                }, 1200);
+                }, 1000);
             };
 
             const fallbackTTS = (word) => {
                 if (!window.speechSynthesis) return;
-                // 双重保险：再次打断
                 window.speechSynthesis.cancel();
-                
                 const utterance = new SpeechSynthesisUtterance(word);
                 utterance.lang = LANG_CONFIG[currentLang].code;
-                // 语速稍微调快一点点，感觉更干脆
                 utterance.rate = 1.0; 
                 window.speechSynthesis.speak(utterance);
             };
 
-            // --- 核心逻辑：极速翻译 (支持缓存 + 打断) ---
             const translateWord = async (word, context) => {
-                // 1. 优先查缓存 (Map查找是纳秒级的，真正即刻显示)
                 const cacheKey = `${currentLang}_${word.toLowerCase()}`;
                 if (translationCacheRef.current.has(cacheKey)) {
                     setTranslation(translationCacheRef.current.get(cacheKey));
@@ -213,7 +211,6 @@
                     return;
                 }
 
-                // 如果没缓存，先清空旧翻译，显示 Loading
                 setTranslation("");
                 setIsTranslating(true);
                 
@@ -223,7 +220,7 @@
                     return;
                 }
 
-                // 2. 掐断上一个未完成的请求
+                // 翻译请求中断
                 if (abortControllerRef.current) {
                     abortControllerRef.current.abort();
                 }
@@ -231,7 +228,6 @@
                 abortControllerRef.current = abortController;
 
                 try {
-                    // 3. 极简 Prompt，减少 AI 思考时间
                     const prompt = `Translate "${word}" to Simplified Chinese. Definition only. Concise.`;
 
                     const response = await fetch(DEFAULT_API_URL, {
@@ -240,13 +236,12 @@
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${apiKey}`
                         },
-                        // 绑定信号，支持取消
                         signal: abortController.signal,
                         body: JSON.stringify({
                             model: model,
                             messages: [{ role: "user", content: prompt }],
                             temperature: 0.1, 
-                            max_tokens: 40 // 限制返回长度，加快传输
+                            max_tokens: 60
                         })
                     });
 
@@ -254,17 +249,13 @@
                     const data = await response.json();
                     const resultText = data.choices[0].message.content.trim();
                     
-                    // 存入缓存
                     translationCacheRef.current.set(cacheKey, resultText);
                     setTranslation(resultText);
 
                 } catch (error) {
-                    if (error.name === 'AbortError') {
-                        // 忽略被取消的请求，不做任何UI更新
-                        return;
-                    }
+                    if (error.name === 'AbortError') return;
                     console.error("Translation error:", error);
-                    setTranslation("翻译出错");
+                    setTranslation("...");
                 } finally {
                     if (abortControllerRef.current === abortController) {
                         setIsTranslating(false);
@@ -275,14 +266,12 @@
             const handleWordClick = (word, index) => {
                 if (!/[a-zA-Z0-9\u00C0-\u024F\u0400-\u04FF]/.test(word)) return;
 
-                // 1. 界面响应
                 setSelectedWord({ word, index });
                 
-                // 2. 触发发音 (Fire and forget)
+                // 立即执行发音
                 speakWord(word); 
 
-                // 3. 触发翻译
-                const start = Math.max(0, index - 8); // 缩小上下文范围，加快处理
+                const start = Math.max(0, index - 8);
                 const end = Math.min(parsedWords.length, index + 8);
                 const context = parsedWords.slice(start, end).join("");
                 setContextSentence(context);
@@ -328,7 +317,7 @@
 
             const generateArticle = async (level) => {
                 if (!apiKey) {
-                    alert("请先在设置中配置 API Key (SiliconFlow)");
+                    alert("请配置 API Key");
                     setShowGenerateModal(false);
                     setShowSettings(true);
                     return;
@@ -337,7 +326,7 @@
                 setShowGenerateModal(false);
                 try {
                     const targetLangName = LANG_CONFIG[currentLang].name;
-                    const prompt = `Write a short story in ${targetLangName} (CEFR Level ${level}). Length: 200-300 words. Format: Plain text.`;
+                    const prompt = `Write a short story in ${targetLangName} (CEFR Level ${level}). Length: 200 words. Format: Plain text.`;
                     const response = await fetch(DEFAULT_API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -347,7 +336,7 @@
                     const data = await response.json();
                     parseText(data.choices[0].message.content.trim(), `AI Generated (${targetLangName} ${level})`);
                 } catch (error) {
-                    alert("生成失败，请检查 API Key。");
+                    alert("生成失败");
                 } finally {
                     setIsGenerating(false);
                 }
@@ -467,7 +456,7 @@
                     {showSettings && (
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-2xl">
-                                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} />设置</h2><button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">✕</button></div>
+                                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} />设置</h2><button onClick={() => setShowSettings(false)} className=\"text-gray-400 hover:text-gray-600\">✕</button></div>
                                 <div className="space-y-5">
                                     <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">API Key (SiliconFlow)</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
                                     <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">模型名称</label><input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如: Qwen/Qwen2.5-7B-Instruct" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
