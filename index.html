@@ -2,30 +2,10 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 沉浸式阅读器 (LingQ Lite)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AI 沉浸式阅读 (LingQ Pro)</title>
     
-    <!-- 预连接音频源，加速握手 -->
-    <link rel="preconnect" href="https://dict.youdao.com" crossorigin>
-    
-    <!-- 全局错误捕获 -->
-    <script>
-        window.onerror = function(msg, url, lineNo, columnNo, error) {
-            console.error('Error:', msg, lineNo);
-            // 如果 React 挂了，显示错误在页面上
-            var root = document.getElementById('root');
-            if (root && root.innerText.indexOf('正在初始化') !== -1) {
-                 var errorDiv = document.createElement('div');
-                 errorDiv.style.color = 'red';
-                 errorDiv.style.padding = '20px';
-                 errorDiv.innerText = '程序启动失败: ' + msg;
-                 document.body.appendChild(errorDiv);
-            }
-            return false;
-        };
-    </script>
-
-    <!-- 核心库 (unpkg) -->
+    <!-- React & Tailwind -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -33,268 +13,290 @@
     <script src="https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js"></script>
 
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-        .word-span { cursor: pointer; border-radius: 4px; padding: 0 2px; transition: all 0.05s; display: inline-block; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            margin: 0; padding: 0; background-color: #f9fafb; 
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* 单词交互样式 */
+        .word-span { 
+            cursor: pointer; 
+            border-radius: 4px; 
+            padding: 1px 2px; 
+            margin: 0 1px;
+            transition: all 0.15s ease; 
+            display: inline-block; 
+            line-height: 1.8;
+        }
         .word-span:hover { background-color: #e5e7eb; }
-        .word-span:active { background-color: #fde047; transform: scale(0.98); }
-        .word-span.active { background-color: #fde047; color: #000; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .word-span.active { 
+            background-color: #fde047; /* 亮黄色高亮 */
+            color: #000; 
+            font-weight: 600; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
+            transform: scale(1.05);
+        }
+
+        /* 底部弹窗动画 */
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+
+        /* 隐藏滚动条 */
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+        /* iOS 安全区域适配 */
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
+<body class="h-screen w-screen overflow-hidden text-gray-800">
     
-    <div id="root" class="h-full w-full">
-        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #666;">
-            <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-            <p style="margin-top: 10px; font-size: 14px;">正在初始化...</p>
-        </div>
-    </div>
+    <div id="root" class="h-full w-full"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
         // --- 图标组件 ---
-        const Icon = ({ size = 24, className = "", children, fill = "none" }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={{ overflow: 'visible' }}>
-                {children}
-            </svg>
+        const Icon = ({ size = 24, className = "", children }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={{ overflow: 'visible' }}>{children}</svg>
         );
-        const BookOpen = (props) => <Icon {...props}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></Icon>;
-        const Play = (props) => <Icon {...props}><polygon points="5 3 19 12 5 21 5 3"/></Icon>;
-        const CheckCircle = (props) => <Icon {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>;
-        const AlertCircle = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>;
-        const Upload = (props) => <Icon {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>;
-        const FileText = (props) => <Icon {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></Icon>;
-        const Trash2 = (props) => <Icon {...props}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></Icon>;
-        const RefreshCw = (props) => <Icon {...props}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
-        const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.2 1.3L3 12l5.9 1.9a2 2 0 0 1 1.2 1.3L12 21l1.9-5.8a2 2 0 0 1 1.2-1.3L12 3z"/></Icon>;
-        const Settings = (props) => <Icon {...props}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
-        const Volume2 = (props) => <Icon {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></Icon>;
+        const BookOpen = (p) => <Icon {...p}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></Icon>;
+        const SettingsIcon = (p) => <Icon {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
+        const Play = (p) => <Icon {...p}><polygon points="5 3 19 12 5 21 5 3"/></Icon>;
+        const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></Icon>;
+        const Upload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>;
+        const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></Icon>;
+        const Sparkles = (p) => <Icon {...p}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.2 1.3L3 12l5.9 1.9a2 2 0 0 1 1.2 1.3L12 21l1.9-5.8a2 2 0 0 1 1.2-1.3L12 3z"/></Icon>;
+        const ChevronDown = (p) => <Icon {...p}><polyline points="6 9 12 15 18 9"/></Icon>;
 
-        const DEFAULT_API_URL = "https://api.siliconflow.cn/v1/chat/completions";
-        
+        // --- 预设配置 (保留你想要的列表) ---
+        const TRANS_PRESETS = [
+            { id: 'siliconflow', name: 'SiliconFlow (推荐)', url: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct' },
+            { id: 'deepseek', name: 'DeepSeek (深度求索)', url: 'https://api.deepseek.com', model: 'deepseek-chat' },
+            { id: 'openai', name: 'OpenAI (官方)', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+            { id: 'gemini', name: 'Google Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-1.5-flash' },
+            { id: 'custom', name: '自定义接口...', url: '', model: '' }
+        ];
+
+        const TTS_PRESETS = [
+            { id: 'browser', name: '浏览器/有道 (免费/极速)', url: '', type: 'browser' },
+            { id: 'openai_tts', name: 'OpenAI TTS (拟真/付费)', url: 'https://api.openai.com/v1', type: 'openai' },
+            { id: 'custom_tts', name: '自定义 TTS...', url: '', type: 'openai' }
+        ];
+
         const LANG_CONFIG = {
             'en': { name: 'English', code: 'en-US', label: '英语', dictCode: 'eng' },
             'fr': { name: 'French', code: 'fr-FR', label: '法语', dictCode: 'fr' },
-            'ru': { name: 'Russian', code: 'ru-RU', label: '俄语', dictCode: 'ru' }
+            'ru': { name: 'Russian', code: 'ru-RU', label: '俄语', dictCode: 'ru' },
+            'de': { name: 'German', code: 'de-DE', label: '德语', dictCode: 'de' },
+            'es': { name: 'Spanish', code: 'es-ES', label: '西语', dictCode: 'es' },
+            'ja': { name: 'Japanese', code: 'ja-JP', label: '日语', dictCode: 'jap' }
+        };
+
+        const DEFAULT_CONFIG = {
+            transProvider: 'siliconflow',
+            transUrl: 'https://api.siliconflow.cn/v1',
+            transKey: '',
+            transModel: 'Qwen/Qwen2.5-7B-Instruct',
+            ttsProvider: 'browser', 
+            ttsUrl: 'https://api.openai.com/v1',
+            ttsKey: '',
+            ttsModel: 'tts-1',
+            ttsVoice: 'alloy',
         };
 
         const App = () => {
-            const [text, setText] = useState("");
+            // --- 核心状态 ---
+            const [config, setConfig] = useState(DEFAULT_CONFIG);
             const [parsedWords, setParsedWords] = useState([]);
             const [currentLang, setCurrentLang] = useState('en');
             const [fileName, setFileName] = useState("");
             
-            const [apiKey, setApiKey] = useState("");
-            const [model, setModel] = useState("Qwen/Qwen2.5-7B-Instruct");
+            // UI 状态
             const [showSettings, setShowSettings] = useState(false);
             const [showGenerateModal, setShowGenerateModal] = useState(false);
-            const [isApiValid, setIsApiValid] = useState(null);
             
-            const [selectedWord, setSelectedWord] = useState(null);
+            // 查词状态
+            const [selectedWord, setSelectedWord] = useState(null); // { word: string, index: number }
             const [translation, setTranslation] = useState("");
             const [isTranslating, setIsTranslating] = useState(false);
             const [isGenerating, setIsGenerating] = useState(false);
             const [contextSentence, setContextSentence] = useState("");
-            const [isPlaying, setIsPlaying] = useState(false);
             
             const fileInputRef = useRef(null);
-            const translationCacheRef = useRef(new Map());
-            const abortControllerRef = useRef(null);
-            
-            // --- 音频核心 (单例模式 + ID锁) ---
-            const playerRef = useRef(null);
-            const clickIdRef = useRef(0);
-            const timeoutRef = useRef(null);
+            const audioRef = useRef(new Audio()); 
+
+            // --- 初始化 ---
+            useEffect(() => {
+                const saved = localStorage.getItem('lingq_pro_config_v2');
+                if (saved) {
+                    try { setConfig({ ...DEFAULT_CONFIG, ...JSON.parse(saved) }); } catch (e) {}
+                }
+            }, []);
 
             useEffect(() => {
-                // 初始化唯一 Audio 实例
-                try {
-                    playerRef.current = new Audio();
-                    playerRef.current.onended = () => setIsPlaying(false);
-                    playerRef.current.onpause = () => setIsPlaying(false);
-                    playerRef.current.onplay = () => setIsPlaying(true);
-                    // 预加载一下，激活 AudioContext
-                    playerRef.current.load();
-                } catch(e) {
-                    console.error("Audio init error", e);
-                }
+                localStorage.setItem('lingq_pro_config_v2', JSON.stringify(config));
+            }, [config]);
 
-                const storedKey = localStorage.getItem('lingq_api_key');
-                const storedModel = localStorage.getItem('lingq_model');
-                if (storedKey) setApiKey(storedKey);
-                if (storedModel) setModel(storedModel);
-
-                return () => {
-                    if (playerRef.current) {
-                        playerRef.current.pause();
-                        playerRef.current.src = "";
+            // 点击外部关闭底部面板
+            useEffect(() => {
+                const handleClickOutside = (e) => {
+                    // 如果点击的是单词本身，不处理（由 handleWordClick 处理）
+                    if (e.target.classList.contains('word-span')) return;
+                    
+                    // 如果点击的不是底部面板内部
+                    const panel = document.getElementById('bottom-panel');
+                    if (panel && !panel.contains(e.target)) {
+                        setSelectedWord(null);
                     }
-                    if (window.speechSynthesis) window.speechSynthesis.cancel();
+                };
+                document.addEventListener('mousedown', handleClickOutside);
+                document.addEventListener('touchstart', handleClickOutside);
+                return () => {
+                    document.removeEventListener('mousedown', handleClickOutside);
+                    document.removeEventListener('touchstart', handleClickOutside);
                 };
             }, []);
 
+            // --- 文本解析 ---
             const parseText = (rawText, name = "Imported Text") => {
+                // 保留标点符号和换行符，以便真实还原文章结构
                 const tokens = rawText.split(/([ \t\n\r,.?!;:"'()\[\]\—\-]+)/).filter(t => t);
                 setParsedWords(tokens);
-                setText(rawText);
                 setFileName(name);
                 setSelectedWord(null); 
-                setTranslation("");
-                translationCacheRef.current.clear();
             };
 
-            const getAudioUrl = (word) => {
-                const dictCode = LANG_CONFIG[currentLang].dictCode;
-                if (currentLang === 'en') {
-                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
-                } else {
-                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&le=${dictCode}`;
-                }
-            };
-
-            // --- 稳健发音逻辑 ---
-            const speakWord = (word) => {
-                const player = playerRef.current;
-                if (!player) return;
-
-                // 1. 生成 ID，锁定当前点击操作
-                const thisClickId = Date.now();
-                clickIdRef.current = thisClickId;
-
-                // 2. 物理重置：停止一切旧声音
-                if (window.speechSynthesis) window.speechSynthesis.cancel();
-                
-                player.pause();
-                player.currentTime = 0;
-                player.src = ""; // 切断旧连接
-                player.load();   // 丢弃缓冲
-
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                setIsPlaying(true); // 立即给用户反馈
-
-                // 3. 设置新源
-                const url = getAudioUrl(word);
-                player.src = url;
-                
-                // 4. 播放
-                const playPromise = player.play();
-                
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        // 只有当 ID 没变（说明没有点击新词）时，才处理错误
-                        if (clickIdRef.current === thisClickId) {
-                            if (error.name !== 'AbortError') {
-                                console.log("Network play failed, fallback to TTS");
-                                fallbackTTS(word);
-                            }
+            // --- 音频播放 ---
+            const speakWord = async (word) => {
+                // 1. 浏览器/Youdao 模式 (免费，快)
+                if (config.ttsProvider === 'browser') {
+                    const dictCode = LANG_CONFIG[currentLang].dictCode;
+                    let url = '';
+                    if (currentLang === 'en') {
+                        url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
+                    } else {
+                        url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&le=${dictCode}`;
+                    }
+                    
+                    const audio = audioRef.current;
+                    audio.src = url;
+                    audio.volume = 1.0;
+                    audio.play().catch(() => {
+                        // 兜底：如果网络音频失败，使用系统 TTS
+                        if (window.speechSynthesis) {
+                            window.speechSynthesis.cancel();
+                            const utterance = new SpeechSynthesisUtterance(word);
+                            utterance.lang = LANG_CONFIG[currentLang].code;
+                            window.speechSynthesis.speak(utterance);
                         }
                     });
+                    return;
                 }
 
-                // 5. 超时险 (800ms) - 极速降级
-                timeoutRef.current = setTimeout(() => {
-                    // ID 必须一致，且 player 没准备好
-                    if (clickIdRef.current === thisClickId) {
-                        if (player.readyState < 3) {
-                            console.log("Network timeout, switching to TTS");
-                            player.src = ""; // 停止下载
-                            fallbackTTS(word);
-                        }
+                // 2. OpenAI TTS 模式
+                if (config.ttsProvider === 'openai_tts' || config.ttsProvider === 'custom_tts') {
+                    if (!config.ttsKey) return alert("请先配置 TTS API Key");
+                    try {
+                        const response = await fetch(`${config.ttsUrl}/audio/speech`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.ttsKey}` },
+                            body: JSON.stringify({ model: config.ttsModel, input: word, voice: config.ttsVoice })
+                        });
+                        if (!response.ok) throw new Error("API Error");
+                        const blob = await response.blob();
+                        const url = URL.createObjectURL(blob);
+                        new Audio(url).play();
+                    } catch (e) {
+                        alert("播放失败: " + e.message);
                     }
-                }, 800);
+                }
             };
 
-            const fallbackTTS = (word) => {
-                if (clickIdRef.current !== clickIdRef.current) return; // ID 校验
-                
-                if (!window.speechSynthesis) {
-                    setIsPlaying(false);
+            // --- LLM 生成文章 ---
+            const generateArticle = async (level) => {
+                if (!config.transKey) {
+                    alert(`请先配置 API Key`);
+                    setShowGenerateModal(false);
+                    setShowSettings(true);
                     return;
                 }
+                if (parsedWords.length > 0 && !window.confirm("新文章将覆盖当前内容，继续吗？")) return;
                 
-                window.speechSynthesis.cancel();
-                const utterance = new SpeechSynthesisUtterance(word);
-                utterance.lang = LANG_CONFIG[currentLang].code;
-                utterance.rate = 1.0; 
-                
-                utterance.onend = () => setIsPlaying(false);
-                utterance.onerror = () => setIsPlaying(false);
-                
-                window.speechSynthesis.speak(utterance);
+                setIsGenerating(true);
+                setShowGenerateModal(false);
+
+                try {
+                    const targetLangName = LANG_CONFIG[currentLang].name;
+                    const prompt = `Write a short article (200 words) in ${targetLangName} for CEFR ${level}. Topic: Daily life. Plain text only.`;
+                    
+                    const apiUrl = config.transUrl.endsWith('/chat/completions') ? config.transUrl : `${config.transUrl}/chat/completions`;
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.transKey}` },
+                        body: JSON.stringify({
+                            model: config.transModel,
+                            messages: [{ role: "user", content: prompt }],
+                            temperature: 0.7
+                        })
+                    });
+
+                    const data = await response.json();
+                    const generatedText = data.choices?.[0]?.message?.content || "";
+                    parseText(generatedText, `AI Generated (${level})`);
+                } catch (error) {
+                    alert("生成失败: " + error.message);
+                } finally {
+                    setIsGenerating(false);
+                }
             };
 
+            // --- 单词翻译 ---
             const translateWord = async (word, context) => {
-                const cacheKey = `${currentLang}_${word.toLowerCase()}`;
-                if (translationCacheRef.current.has(cacheKey)) {
-                    setTranslation(translationCacheRef.current.get(cacheKey));
-                    setIsTranslating(false); 
-                    return;
-                }
-
-                setTranslation("");
                 setIsTranslating(true);
+                setTranslation("");
                 
-                if (!apiKey) {
-                    setTranslation("请配置 API Key");
+                if (!config.transKey) {
+                    setTranslation("未配置 API Key，无法翻译");
                     setIsTranslating(false);
                     return;
                 }
 
-                if (abortControllerRef.current) {
-                    abortControllerRef.current.abort();
-                }
-                const abortController = new AbortController();
-                abortControllerRef.current = abortController;
-
                 try {
-                    const prompt = `Translate "${word}" to Simplified Chinese. Definition only. Concise.`;
+                    const prompt = `Explain "${word}" concisely in Simplified Chinese. Context: "...${context}...". No markdown.`;
+                    const apiUrl = config.transUrl.endsWith('/chat/completions') ? config.transUrl : `${config.transUrl}/chat/completions`;
 
-                    const response = await fetch(DEFAULT_API_URL, {
+                    const response = await fetch(apiUrl, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`
-                        },
-                        signal: abortController.signal,
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.transKey}` },
                         body: JSON.stringify({
-                            model: model,
+                            model: config.transModel,
                             messages: [{ role: "user", content: prompt }],
-                            temperature: 0.1, 
+                            temperature: 0.3,
                             max_tokens: 60
                         })
                     });
 
-                    if (!response.ok) throw new Error("API Error");
                     const data = await response.json();
-                    const resultText = data.choices[0].message.content.trim();
-                    
-                    translationCacheRef.current.set(cacheKey, resultText);
-                    setTranslation(resultText);
-
+                    setTranslation(data.choices?.[0]?.message?.content || "翻译失败");
                 } catch (error) {
-                    if (error.name === 'AbortError') return;
-                    console.error("Translation error:", error);
-                    setTranslation("...");
+                    setTranslation("Error: " + error.message);
                 } finally {
-                    if (abortControllerRef.current === abortController) {
-                        setIsTranslating(false);
-                    }
+                    setIsTranslating(false);
                 }
             };
 
             const handleWordClick = (word, index) => {
-                if (!/[a-zA-Z0-9\u00C0-\u024F\u0400-\u04FF]/.test(word)) return;
+                // 忽略标点符号点击
+                if (!/[a-zA-Z0-9\u00C0-\u024F\u0400-\u04FF\u4e00-\u9fa5]/.test(word)) return;
 
                 setSelectedWord({ word, index });
                 speakWord(word); 
 
-                const start = Math.max(0, index - 8);
-                const end = Math.min(parsedWords.length, index + 8);
+                // 获取上下文 (前后15个token)
+                const start = Math.max(0, index - 15);
+                const end = Math.min(parsedWords.length, index + 15);
                 const context = parsedWords.slice(start, end).join("");
                 setContextSentence(context);
 
@@ -304,196 +306,248 @@
             const handleFileSelect = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                if (parsedWords.length > 0) {
-                    if (!window.confirm("当前已有导入的文章，确认要覆盖吗？")) {
-                        e.target.value = '';
-                        return;
-                    }
+                
+                const reader = new FileReader();
+                reader.onload = (e) => parseText(e.target.result, file.name);
+                
+                if (file.name.endsWith('.docx')) {
+                     file.arrayBuffer().then(buffer => mammoth.extractRawText({ arrayBuffer: buffer }).then(r => parseText(r.value, file.name)));
+                } else {
+                    reader.readAsText(file);
                 }
-                processFile(file);
                 e.target.value = '';
             };
 
-            const processFile = async (file) => {
-                if (file.name.endsWith('.docx')) {
-                    const arrayBuffer = await file.arrayBuffer();
-                    mammoth.extractRawText({ arrayBuffer: arrayBuffer })
-                        .then(result => parseText(result.value, file.name))
-                        .catch(err => alert("解析 Word 文件失败: " + err.message));
-                } else {
-                    const reader = new FileReader();
-                    reader.onload = (e) => parseText(e.target.result, file.name);
-                    reader.readAsText(file);
-                }
-            };
-
-            const clearText = () => {
-                if(window.confirm("确定要清空当前文章吗？")) {
-                    setParsedWords([]);
-                    setText("");
-                    setFileName("");
-                    setSelectedWord(null);
-                    translationCacheRef.current.clear();
-                }
-            };
-
-            const generateArticle = async (level) => {
-                if (!apiKey) {
-                    alert("请配置 API Key");
-                    setShowGenerateModal(false);
-                    setShowSettings(true);
-                    return;
-                }
-                setIsGenerating(true);
-                setShowGenerateModal(false);
-                try {
-                    const targetLangName = LANG_CONFIG[currentLang].name;
-                    const prompt = `Write a short story in ${targetLangName} (CEFR Level ${level}). Length: 200 words. Format: Plain text.`;
-                    const response = await fetch(DEFAULT_API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                        body: JSON.stringify({ model: model, messages: [{ role: "user", content: prompt }], temperature: 0.7, max_tokens: 1000 })
-                    });
-                    if (!response.ok) throw new Error("API Error");
-                    const data = await response.json();
-                    parseText(data.choices[0].message.content.trim(), `AI Generated (${targetLangName} ${level})`);
-                } catch (error) {
-                    alert("生成失败");
-                } finally {
-                    setIsGenerating(false);
-                }
-            };
-
-            const saveSettings = () => {
-                localStorage.setItem('lingq_api_key', apiKey);
-                localStorage.setItem('lingq_model', model);
-                testConnection();
-            };
-
-            const testConnection = async () => {
-                setIsApiValid(null);
-                try {
-                    const response = await fetch(DEFAULT_API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                        body: JSON.stringify({ model: model, messages: [{ role: "user", content: "Hi" }], max_tokens: 1 })
-                    });
-                    setIsApiValid(response.ok);
-                } catch (e) {
-                    setIsApiValid(false);
-                }
-            };
-
+            // --- 渲染 ---
             return (
                 <div className="flex flex-col h-full w-full bg-gray-50">
-                    <header className="bg-white shadow-sm p-3 flex justify-between items-center z-10 shrink-0 border-b border-gray-200 relative">
+                    
+                    {/* 顶部极简导航 */}
+                    <header className="bg-white shadow-sm px-4 h-14 flex justify-between items-center z-10 shrink-0 border-b border-gray-100">
                         <div className="flex items-center gap-2 overflow-hidden">
-                            <BookOpen className="text-blue-600 shrink-0" />
-                            <div className="flex flex-col">
-                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">Stable</span></h1>
-                                {fileName && <span className="text-xs text-gray-500 truncate max-w-[150px]">{fileName}</span>}
+                            <div className="bg-blue-600 text-white p-1 rounded">
+                                <BookOpen size={18} />
                             </div>
+                            <span className="font-bold text-gray-800 tracking-tight text-sm sm:text-base">LingQ Pro</span>
+                            {fileName && <span className="text-xs text-gray-400 truncate max-w-[80px] sm:max-w-[150px] border-l border-gray-200 pl-2 ml-1">{fileName}</span>}
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <select value={currentLang} onChange={(e) => { setCurrentLang(e.target.value); translationCacheRef.current.clear(); }} className="bg-gray-100 border-none rounded text-xs py-1 px-2 focus:ring-2 focus:ring-blue-500 shrink-0">
-                                {Object.entries(LANG_CONFIG).map(([key, conf]) => (<option key={key} value={key}>{conf.label}</option>))}
+                        <div className="flex items-center gap-3">
+                            <select 
+                                value={currentLang} 
+                                onChange={(e) => setCurrentLang(e.target.value)}
+                                className="bg-transparent text-sm font-medium text-gray-600 outline-none"
+                            >
+                                {Object.entries(LANG_CONFIG).map(([key, conf]) => (
+                                    <option key={key} value={key}>{conf.label}</option>
+                                ))}
                             </select>
-                            <button onClick={() => setShowGenerateModal(true)} className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition shrink-0" title="AI 生成">
+                            
+                            <button onClick={() => setShowGenerateModal(true)} className="text-purple-600 hover:bg-purple-50 p-1.5 rounded-full transition" title="AI 生成">
                                 <Sparkles size={18} />
                             </button>
+
                             {parsedWords.length > 0 ? (
-                                <>
-                                    <button onClick={clearText} className="p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 rounded-full transition shrink-0"><Trash2 size={18} /></button>
-                                    <label className="cursor-pointer p-2 text-blue-600 hover:bg-blue-50 rounded-full transition shrink-0"><RefreshCw size={18} /><input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} /></label>
-                                </>
+                                <button onClick={() => {if(confirm("清空当前文章？")) {setParsedWords([]); setFileName("");}}} className="text-gray-400 hover:text-red-500 p-1.5 rounded-full transition">
+                                    <Trash2 size={18} />
+                                </button>
                             ) : (
-                                <label className="cursor-pointer bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm flex items-center gap-1 hover:bg-blue-700 transition shadow-sm shrink-0"><Upload size={14} /><span>导入</span><input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} /></label>
+                                <label className="cursor-pointer text-blue-600 hover:bg-blue-50 p-1.5 rounded-full transition">
+                                    <Upload size={18} />
+                                    <input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
+                                </label>
                             )}
-                            <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-gray-100 rounded-full shrink-0"><Settings size={20} className="text-gray-600" /></button>
+
+                            <button onClick={() => setShowSettings(true)} className="text-gray-600 hover:bg-gray-100 p-1.5 rounded-full transition">
+                                <SettingsIcon size={18} />
+                            </button>
                         </div>
                     </header>
 
-                    <main className="flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50 scroll-smooth relative w-full">
+                    {/* 中间阅读区 (核心) */}
+                    <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-10 bg-white sm:bg-gray-50 scroll-smooth pb-32">
                         {isGenerating && (
                             <div className="absolute inset-0 bg-white/80 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
-                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mb-4"></div>
-                                <p className="text-purple-800 font-medium animate-pulse">AI 正在为您撰写文章...</p>
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mb-3"></div>
+                                <p className="text-purple-800 text-sm font-medium animate-pulse">AI 正在撰写文章...</p>
                             </div>
                         )}
+
                         {parsedWords.length === 0 ? (
-                            <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-4 mt-10">
-                                <div className="bg-white p-6 rounded-full shadow-sm"><FileText size={48} className="text-blue-200" /></div>
-                                <div className="text-center"><p className="text-gray-600 font-medium">开始阅读</p><p className="text-sm mt-1">导入文件或生成文章</p></div>
-                                <textarea className="w-full max-w-lg p-4 border border-gray-200 rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition" rows="6" placeholder="或者直接在这里粘贴文章内容..." onBlur={(e) => { if(e.target.value.trim()) parseText(e.target.value, "Clipboard Content"); }}></textarea>
+                            <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-4 opacity-60 mt-[-50px]">
+                                <BookOpen size={48} className="text-gray-300" />
+                                <div className="text-center space-y-1">
+                                    <p className="text-sm">点击右上角导入文章</p>
+                                    <p className="text-xs">或点击 ✨ 让 AI 生成</p>
+                                </div>
+                                <textarea 
+                                    className="w-full max-w-md p-3 border border-gray-200 rounded-lg bg-gray-50 text-sm focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition"
+                                    rows="4"
+                                    placeholder="或在此粘贴文本..."
+                                    onBlur={(e) => {if(e.target.value.trim()) parseText(e.target.value, "Clipboard Content");}}
+                                ></textarea>
                             </div>
                         ) : (
-                            <div className="max-w-3xl mx-auto bg-white p-6 sm:p-10 shadow-sm rounded-xl text-lg sm:text-xl leading-loose text-gray-800 break-words w-full">
+                            <div className="max-w-3xl mx-auto bg-white sm:shadow-sm sm:rounded-xl sm:p-8 min-h-[60vh] text-lg sm:text-xl leading-[2.2] text-gray-800 break-words font-serif sm:font-sans">
                                 {parsedWords.map((token, idx) => (
-                                    <span key={idx} onClick={() => handleWordClick(token, idx)} className={`word-span ${selectedWord?.index === idx ? 'active' : ''}`}>{token}</span>
+                                    <span 
+                                        key={idx}
+                                        onClick={() => handleWordClick(token, idx)}
+                                        className={`word-span ${selectedWord?.index === idx ? 'active' : ''}`}
+                                    >
+                                        {token}
+                                    </span>
                                 ))}
-                                <div className={`transition-all duration-300 ${selectedWord ? 'h-48' : 'h-16'}`}></div>
                             </div>
                         )}
                     </main>
 
+                    {/* 底部查词面板 (核心交互) */}
                     {selectedWord && (
-                        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] p-4 z-20 transition-transform duration-300 transform translate-y-0">
+                        <div id="bottom-panel" className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-5px_20px_-5px_rgba(0,0,0,0.1)] p-4 pb-safe z-30 slide-up">
                             <div className="max-w-3xl mx-auto flex flex-col gap-2">
-                                <div className="flex justify-between items-start">
-                                    <div className="flex-1 mr-4">
-                                        <h3 className="text-xl font-bold text-blue-800 flex items-center gap-3">
-                                            {selectedWord.word}
-                                            <button onClick={() => speakWord(selectedWord.word)} className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded-full text-blue-600 transition">
-                                                {isPlaying ? (
-                                                    <span className="flex gap-0.5 items-end h-4 w-4 justify-center pb-0.5">
-                                                        <span className="w-1 bg-current animate-[bounce_1s_infinite] h-2"></span>
-                                                        <span className="w-1 bg-current animate-[bounce_1s_infinite_0.2s] h-3"></span>
-                                                        <span className="w-1 bg-current animate-[bounce_1s_infinite_0.4s] h-1.5"></span>
-                                                    </span>
-                                                ) : (
-                                                    <Volume2 size={16} fill="currentColor" />
-                                                )}
-                                            </button>
-                                        </h3>
-                                        <p className="text-xs text-gray-400 mt-1 line-clamp-1 italic">...{contextSentence}...</p>
+                                <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                        <h3 className="text-xl font-bold text-gray-900">{selectedWord.word}</h3>
+                                        <button 
+                                            onClick={() => speakWord(selectedWord.word)} 
+                                            className="p-1.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition"
+                                        >
+                                            <Play size={16} fill="currentColor" />
+                                        </button>
                                     </div>
-                                    <button onClick={() => setSelectedWord(null)} className="text-gray-400 hover:text-gray-600 p-1"><Icon size={20}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></Icon></button>
+                                    <button onClick={() => setSelectedWord(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                                        <X size={20} />
+                                    </button>
                                 </div>
-                                <div className="mt-1 min-h-[3rem]">
+                                
+                                <div className="min-h-[2.5rem] text-base text-gray-700 leading-relaxed">
                                     {isTranslating ? (
-                                        <div className="flex items-center gap-2 text-blue-600 text-sm animate-pulse">
-                                            <div className="h-2 w-2 bg-blue-600 rounded-full animate-bounce"></div>
-                                            <div className="h-2 w-2 bg-blue-600 rounded-full animate-bounce delay-75"></div>
-                                            <div className="h-2 w-2 bg-blue-600 rounded-full animate-bounce delay-150"></div>
-                                            <span className="ml-1">正在翻译...</span>
+                                        <div className="flex items-center gap-2 text-blue-500 text-sm py-1">
+                                            <span className="animate-pulse">AI 正在思考释义...</span>
                                         </div>
                                     ) : (
-                                        <div className="text-sm sm:text-base text-gray-800 bg-gray-50 p-3 rounded-lg border border-gray-100 font-medium">{translation || "暂无翻译"}</div>
+                                        <div className="bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                                            {translation}
+                                        </div>
                                     )}
+                                </div>
+                                <div className="text-xs text-gray-400 truncate border-t border-gray-50 pt-2 mt-1">
+                                    上下文: {contextSentence}
                                 </div>
                             </div>
                         </div>
                     )}
 
+                    {/* 生成弹窗 */}
                     {showGenerateModal && (
-                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-                            <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
-                                <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold flex items-center gap-2 text-purple-700"><Sparkles size={20} />AI 生成阅读材料</h2><button onClick={() => setShowGenerateModal(false)} className="text-gray-400 hover:text-gray-600">✕</button></div>
-                                <div className="grid grid-cols-2 gap-3">{['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(level => (<button key={level} onClick={() => generateArticle(level)} className="p-3 border rounded-lg hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700 transition text-center font-semibold text-gray-700">{level}</button>))}</div>
+                        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowGenerateModal(false)}>
+                            <div className="bg-white rounded-xl w-full max-w-sm p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+                                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-gray-800">
+                                    <Sparkles size={20} className="text-purple-500"/>
+                                    生成 {LANG_CONFIG[currentLang].label} 阅读材料
+                                </h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {['A1 (入门)', 'A2 (基础)', 'B1 (进阶)', 'B2 (中级)', 'C1 (高级)', 'C2 (精通)'].map(level => (
+                                        <button
+                                            key={level}
+                                            onClick={() => generateArticle(level.split(' ')[0])}
+                                            className="p-3 border border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 hover:text-purple-700 transition text-sm font-medium"
+                                        >
+                                            {level}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}
 
+                    {/* 设置弹窗 (带下拉列表) */}
                     {showSettings && (
-                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                            <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-2xl">
-                                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} />设置</h2><button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">✕</button></div>
-                                <div className="space-y-5">
-                                    <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">API Key (SiliconFlow)</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
-                                    <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">模型名称</label><input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如: Qwen/Qwen2.5-7B-Instruct" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
-                                    <div className="flex items-center gap-3 mt-4 pt-2"><button onClick={saveSettings} className="bg-blue-600 text-white px-4 py-2.5 rounded-lg hover:bg-blue-700 flex-1 font-medium transition shadow-md shadow-blue-200">保存并连接</button></div>
-                                    {isApiValid !== null && (<div className={`text-sm flex items-center gap-2 p-3 rounded-lg border ${isApiValid ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{isApiValid ? <CheckCircle size={18}/> : <AlertCircle size={18}/>}{isApiValid ? "API 连接成功" : "连接失败"}</div>)}
+                        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+                            <div className="bg-white rounded-xl w-full max-w-md p-0 shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center p-4 border-b border-gray-100 bg-gray-50">
+                                    <h2 className="font-bold text-gray-800 flex items-center gap-2">API 设置</h2>
+                                    <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                                </div>
+
+                                <div className="p-5 overflow-y-auto space-y-6">
+                                    {/* 翻译设置 */}
+                                    <section className="space-y-3">
+                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block">翻译 & 生成 (LLM)</label>
+                                        <div className="relative">
+                                            <select 
+                                                value={config.transProvider}
+                                                onChange={(e) => {
+                                                    const pid = e.target.value;
+                                                    const preset = TRANS_PRESETS.find(p => p.id === pid);
+                                                    if(preset) setConfig(prev => ({...prev, transProvider: pid, transUrl: preset.url, transModel: preset.model || prev.transModel}));
+                                                }}
+                                                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2.5 appearance-none text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            >
+                                                {TRANS_PRESETS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                            </select>
+                                            <ChevronDown className="absolute right-3 top-3 text-gray-400 pointer-events-none" size={16} />
+                                        </div>
+                                        
+                                        <input 
+                                            type="text" 
+                                            value={config.transUrl} 
+                                            onChange={(e) => setConfig({...config, transUrl: e.target.value})}
+                                            disabled={config.transProvider !== 'custom'}
+                                            placeholder="API Address"
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600"
+                                        />
+                                        <input 
+                                            type="password" 
+                                            value={config.transKey} 
+                                            onChange={(e) => setConfig({...config, transKey: e.target.value})}
+                                            placeholder="API Key (sk-...)"
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                        />
+                                    </section>
+
+                                    <hr className="border-gray-100"/>
+
+                                    {/* 朗读设置 */}
+                                    <section className="space-y-3">
+                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block">语音朗读 (TTS)</label>
+                                        <div className="relative">
+                                            <select 
+                                                value={config.ttsProvider}
+                                                onChange={(e) => {
+                                                    const pid = e.target.value;
+                                                    const preset = TTS_PRESETS.find(p => p.id === pid);
+                                                    if(preset) setConfig(prev => ({...prev, ttsProvider: pid, ttsUrl: preset.url}));
+                                                }}
+                                                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2.5 appearance-none text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            >
+                                                {TTS_PRESETS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                            </select>
+                                            <ChevronDown className="absolute right-3 top-3 text-gray-400 pointer-events-none" size={16} />
+                                        </div>
+
+                                        {config.ttsProvider !== 'browser' && (
+                                            <div className="space-y-3 animate-slide-up">
+                                                <input 
+                                                    type="password" 
+                                                    value={config.ttsKey} 
+                                                    onChange={(e) => setConfig({...config, ttsKey: e.target.value})}
+                                                    placeholder="TTS Key (sk-...)"
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                                />
+                                            </div>
+                                        )}
+                                    </section>
+                                </div>
+
+                                <div className="p-4 border-t border-gray-100 bg-gray-50">
+                                    <button 
+                                        onClick={() => setShowSettings(false)}
+                                        className="w-full bg-gray-900 text-white py-3 rounded-lg font-medium hover:bg-black transition shadow-lg"
+                                    >
+                                        保存配置
+                                    </button>
                                 </div>
                             </div>
                         </div>
