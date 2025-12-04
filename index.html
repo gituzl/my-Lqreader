@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 沉浸式阅读器 (LingQ Lite) - 极速版</title>
+    <title>AI 沉浸式阅读器 (极速响应版)</title>
     
     <!-- 全局错误捕获 -->
     <script>
@@ -13,7 +13,7 @@
         };
     </script>
 
-    <!-- --- 核心配置：使用 unpkg 官方源 --- -->
+    <!-- 核心库 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -56,7 +56,6 @@
         const CheckCircle = (props) => <Icon {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>;
         const AlertCircle = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>;
         const Upload = (props) => <Icon {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>;
-        const Languages = (props) => <Icon {...props}><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></Icon>;
         const FileText = (props) => <Icon {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></Icon>;
         const Trash2 = (props) => <Icon {...props}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></Icon>;
         const RefreshCw = (props) => <Icon {...props}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
@@ -90,17 +89,17 @@
             
             const fileInputRef = useRef(null);
             
-            // 优化1：翻译缓存，Map 比 Object 性能稍好且更符合语义
+            // --- 优化1：请求中断控制器 (解决翻译慢) ---
             const translationCacheRef = useRef(new Map());
-            // 优化2：AbortController 用于取消之前的请求
             const abortControllerRef = useRef(null);
             
-            // --- 核心修复：单例音频播放器 ---
+            // --- 优化2：音频请求令牌 (解决发音重叠/卡顿) ---
             const playerRef = useRef(null);
             const timeoutRef = useRef(null);
+            // 关键变量：给每次点击分配一个 ID，如果 ID 变了，说明旧的请求作废
+            const audioRequestId = useRef(0);
 
             useEffect(() => {
-                // 初始化唯一的一个 Audio 实例
                 playerRef.current = new Audio();
                 
                 const storedKey = localStorage.getItem('lingq_api_key');
@@ -109,11 +108,11 @@
                 if (storedModel) setModel(storedModel);
 
                 return () => {
-                    // 组件卸载时清理
                     if (playerRef.current) {
                         playerRef.current.pause();
                         playerRef.current.src = "";
                     }
+                    if (window.speechSynthesis) window.speechSynthesis.cancel();
                 };
             }, []);
 
@@ -124,67 +123,171 @@
                 setFileName(name);
                 setSelectedWord(null); 
                 setTranslation("");
-                // 清理之前的翻译缓存，因为上下文变了
                 translationCacheRef.current.clear();
             };
 
             const getAudioUrl = (word) => {
                 const dictCode = LANG_CONFIG[currentLang].dictCode;
-                // 添加时间戳防止浏览器强缓存导致的资源加载假死
-                const ts = new Date().getTime();
+                // 添加时间戳防止浏览器强缓存导致的音频加载卡死
+                const ts = Date.now();
                 if (currentLang === 'en') {
-                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
+                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2&ts=${ts}`;
                 } else {
-                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&le=${dictCode}`;
+                    return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&le=${dictCode}&ts=${ts}`;
                 }
             };
 
-            // --- 核心修复：稳健的发音逻辑 ---
+            // --- 核心逻辑：极速发音 (支持强力打断) ---
             const speakWord = (word) => {
                 const player = playerRef.current;
                 if (!player) return;
 
-                // 1. 强制停止上一个声音，防止声音重叠
+                // 1. 生成新的请求令牌 (ID)
+                // 只要生成了新 ID，旧的播放逻辑中的回调函数就会因为 ID 不匹配而自动放弃执行
+                const currentId = Date.now();
+                audioRequestId.current = currentId;
+
+                // 2. 立即“物理”静音
+                // 不管上一个单词读到哪，立刻停掉
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
                 player.pause();
                 player.currentTime = 0;
+                player.src = ""; // 显式置空，强制断开网络连接
                 
-                // 清除之前的超时计时器
                 if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-                // 2. 设置新源并强制加载 (load() 是解决部分设备无声的关键)
+                // 3. 开始加载新音频
                 const url = getAudioUrl(word);
                 player.src = url;
-                player.load();
+                player.load(); // 强制浏览器重新加载
 
-                // 3. 尝试播放
+                // 4. 尝试播放网络音频
                 const playPromise = player.play();
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
-                        console.log("Network Audio Failed:", error);
-                        // 如果网络播放失败（比如跨域或404），立即转本地 TTS
-                        fallbackTTS(word);
+                        // 只有当 ID 匹配（即这是最新一次点击）时，才处理错误
+                        // 如果 ID 不匹配，说明用户已经点了别的词，这个错误是预期的（AbortError），忽略即可
+                        if (audioRequestId.current === currentId) {
+                            // 排除用户手动打断的情况，如果是真的网络错误，降级到 TTS
+                            if (error.name !== 'AbortError') {
+                                console.log("Network play failed, fallback to TTS");
+                                fallbackTTS(word);
+                            }
+                        }
                     });
                 }
 
-                // 4. 设置超时熔断：如果 1.2秒内没加载出来，强制切 TTS (比之前的 2.5秒更快，体验更流畅)
+                // 5. 超时保险机制 (1.2秒)
+                // 如果网络音频 1.2秒 还没出来，不要干等，直接切本地 TTS
                 timeoutRef.current = setTimeout(() => {
-                    // readyState < 2 意味着数据还没准备好播放
-                    if (player.readyState < 2) { 
-                        console.log("Network timeout, switching to TTS");
-                        player.pause(); // 停止下载
-                        // 触发 TTS
-                        fallbackTTS(word);
+                    if (audioRequestId.current === currentId) {
+                        // readyState < 2 表示还没缓冲够播放的数据
+                        if (player.readyState < 2) { 
+                            console.log("Network timeout, switching to TTS");
+                            player.src = ""; // 停止下载
+                            fallbackTTS(word);
+                        }
                     }
                 }, 1200);
             };
 
             const fallbackTTS = (word) => {
                 if (!window.speechSynthesis) return;
-                window.speechSynthesis.cancel(); // 停止之前的 TTS
+                // 双重保险：再次打断
+                window.speechSynthesis.cancel();
+                
                 const utterance = new SpeechSynthesisUtterance(word);
                 utterance.lang = LANG_CONFIG[currentLang].code;
+                // 语速稍微调快一点点，感觉更干脆
                 utterance.rate = 1.0; 
                 window.speechSynthesis.speak(utterance);
+            };
+
+            // --- 核心逻辑：极速翻译 (支持缓存 + 打断) ---
+            const translateWord = async (word, context) => {
+                // 1. 优先查缓存 (Map查找是纳秒级的，真正即刻显示)
+                const cacheKey = `${currentLang}_${word.toLowerCase()}`;
+                if (translationCacheRef.current.has(cacheKey)) {
+                    setTranslation(translationCacheRef.current.get(cacheKey));
+                    setIsTranslating(false); 
+                    return;
+                }
+
+                // 如果没缓存，先清空旧翻译，显示 Loading
+                setTranslation("");
+                setIsTranslating(true);
+                
+                if (!apiKey) {
+                    setTranslation("请配置 API Key");
+                    setIsTranslating(false);
+                    return;
+                }
+
+                // 2. 掐断上一个未完成的请求
+                if (abortControllerRef.current) {
+                    abortControllerRef.current.abort();
+                }
+                const abortController = new AbortController();
+                abortControllerRef.current = abortController;
+
+                try {
+                    // 3. 极简 Prompt，减少 AI 思考时间
+                    const prompt = `Translate "${word}" to Simplified Chinese. Definition only. Concise.`;
+
+                    const response = await fetch(DEFAULT_API_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`
+                        },
+                        // 绑定信号，支持取消
+                        signal: abortController.signal,
+                        body: JSON.stringify({
+                            model: model,
+                            messages: [{ role: "user", content: prompt }],
+                            temperature: 0.1, 
+                            max_tokens: 40 // 限制返回长度，加快传输
+                        })
+                    });
+
+                    if (!response.ok) throw new Error("API Error");
+                    const data = await response.json();
+                    const resultText = data.choices[0].message.content.trim();
+                    
+                    // 存入缓存
+                    translationCacheRef.current.set(cacheKey, resultText);
+                    setTranslation(resultText);
+
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        // 忽略被取消的请求，不做任何UI更新
+                        return;
+                    }
+                    console.error("Translation error:", error);
+                    setTranslation("翻译出错");
+                } finally {
+                    if (abortControllerRef.current === abortController) {
+                        setIsTranslating(false);
+                    }
+                }
+            };
+
+            const handleWordClick = (word, index) => {
+                if (!/[a-zA-Z0-9\u00C0-\u024F\u0400-\u04FF]/.test(word)) return;
+
+                // 1. 界面响应
+                setSelectedWord({ word, index });
+                
+                // 2. 触发发音 (Fire and forget)
+                speakWord(word); 
+
+                // 3. 触发翻译
+                const start = Math.max(0, index - 8); // 缩小上下文范围，加快处理
+                const end = Math.min(parsedWords.length, index + 8);
+                const context = parsedWords.slice(start, end).join("");
+                setContextSentence(context);
+
+                translateWord(word, context);
             };
 
             const handleFileSelect = (e) => {
@@ -230,124 +333,24 @@
                     setShowSettings(true);
                     return;
                 }
-                if (parsedWords.length > 0) {
-                    if (!window.confirm("生成新文章将覆盖当前文章，是否继续？")) return;
-                }
                 setIsGenerating(true);
                 setShowGenerateModal(false);
-
                 try {
                     const targetLangName = LANG_CONFIG[currentLang].name;
-                    const prompt = `Write a short story in ${targetLangName} (CEFR Level ${level}). Length: 200-300 words. Format: Plain text only. No markdown.`;
-
+                    const prompt = `Write a short story in ${targetLangName} (CEFR Level ${level}). Length: 200-300 words. Format: Plain text.`;
                     const response = await fetch(DEFAULT_API_URL, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`
-                        },
-                        body: JSON.stringify({
-                            model: model,
-                            messages: [{ role: "user", content: prompt }],
-                            temperature: 0.7,
-                            max_tokens: 1000
-                        })
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                        body: JSON.stringify({ model: model, messages: [{ role: "user", content: prompt }], temperature: 0.7, max_tokens: 1000 })
                     });
-
                     if (!response.ok) throw new Error("API Error");
                     const data = await response.json();
-                    const generatedText = data.choices[0].message.content.trim();
-                    parseText(generatedText, `AI Generated (${targetLangName} ${level})`);
-                    
+                    parseText(data.choices[0].message.content.trim(), `AI Generated (${targetLangName} ${level})`);
                 } catch (error) {
-                    console.error(error);
                     alert("生成失败，请检查 API Key。");
                 } finally {
                     setIsGenerating(false);
                 }
-            };
-
-            const translateWord = async (word, context) => {
-                setTranslation("");
-                setIsTranslating(true);
-
-                // 1. 检查缓存
-                const cacheKey = `${currentLang}_${word.toLowerCase()}`;
-                if (translationCacheRef.current.has(cacheKey)) {
-                    setTranslation(translationCacheRef.current.get(cacheKey));
-                    setIsTranslating(false); 
-                    return;
-                }
-
-                if (!apiKey) {
-                    setTranslation("请配置 API Key");
-                    setIsTranslating(false);
-                    return;
-                }
-
-                // 2. 关键优化：取消上一次未完成的请求
-                if (abortControllerRef.current) {
-                    abortControllerRef.current.abort();
-                }
-                // 创建新的控制器
-                const abortController = new AbortController();
-                abortControllerRef.current = abortController;
-
-                try {
-                    // 3. 简化 Prompt，加快 AI 响应速度
-                    const prompt = `Translate "${word}" to Simplified Chinese. Concise. No explanations.`;
-
-                    const response = await fetch(DEFAULT_API_URL, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`
-                        },
-                        // 绑定 signal
-                        signal: abortController.signal,
-                        body: JSON.stringify({
-                            model: model,
-                            messages: [{ role: "user", content: prompt }],
-                            temperature: 0.1, 
-                            max_tokens: 30
-                        })
-                    });
-
-                    if (!response.ok) throw new Error("API Error");
-                    const data = await response.json();
-                    const resultText = data.choices[0].message.content.trim();
-                    
-                    // 写入缓存
-                    translationCacheRef.current.set(cacheKey, resultText);
-                    setTranslation(resultText);
-
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        // 忽略被取消的请求，不更新UI
-                        return;
-                    }
-                    console.error("Translation error:", error);
-                    setTranslation("翻译出错");
-                } finally {
-                    // 只有当当前控制器仍然是最新的时候，才关闭 loading 状态
-                    if (abortControllerRef.current === abortController) {
-                        setIsTranslating(false);
-                    }
-                }
-            };
-
-            const handleWordClick = (word, index) => {
-                if (!/[a-zA-Z0-9\u00C0-\u024F\u0400-\u04FF]/.test(word)) return;
-
-                setSelectedWord({ word, index });
-                speakWord(word); 
-
-                const start = Math.max(0, index - 10);
-                const end = Math.min(parsedWords.length, index + 10);
-                const context = parsedWords.slice(start, end).join("");
-                setContextSentence(context);
-
-                translateWord(word, context);
             };
 
             const saveSettings = () => {
@@ -361,15 +364,8 @@
                 try {
                     const response = await fetch(DEFAULT_API_URL, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`
-                        },
-                        body: JSON.stringify({
-                            model: model,
-                            messages: [{ role: "user", content: "Hi" }],
-                            max_tokens: 5
-                        })
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                        body: JSON.stringify({ model: model, messages: [{ role: "user", content: "Hi" }], max_tokens: 1 })
                     });
                     setIsApiValid(response.ok);
                 } catch (e) {
@@ -383,50 +379,27 @@
                         <div className="flex items-center gap-2 overflow-hidden">
                             <BookOpen className="text-blue-600 shrink-0" />
                             <div className="flex flex-col">
-                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">Turbo</span></h1>
+                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">Speed</span></h1>
                                 {fileName && <span className="text-xs text-gray-500 truncate max-w-[150px]">{fileName}</span>}
                             </div>
                         </div>
 
                         <div className="flex items-center gap-2">
-                            <select 
-                                value={currentLang} 
-                                onChange={(e) => {
-                                    setCurrentLang(e.target.value);
-                                    translationCacheRef.current.clear();
-                                }}
-                                className="bg-gray-100 border-none rounded text-xs py-1 px-2 focus:ring-2 focus:ring-blue-500 shrink-0"
-                            >
-                                {Object.entries(LANG_CONFIG).map(([key, conf]) => (
-                                    <option key={key} value={key}>{conf.label}</option>
-                                ))}
+                            <select value={currentLang} onChange={(e) => { setCurrentLang(e.target.value); translationCacheRef.current.clear(); }} className="bg-gray-100 border-none rounded text-xs py-1 px-2 focus:ring-2 focus:ring-blue-500 shrink-0">
+                                {Object.entries(LANG_CONFIG).map(([key, conf]) => (<option key={key} value={key}>{conf.label}</option>))}
                             </select>
-                            
                             <button onClick={() => setShowGenerateModal(true)} className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition shrink-0" title="AI 生成">
                                 <Sparkles size={18} />
                             </button>
-
                             {parsedWords.length > 0 ? (
                                 <>
-                                    <button onClick={clearText} className="p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 rounded-full transition shrink-0">
-                                        <Trash2 size={18} />
-                                    </button>
-                                    <label className="cursor-pointer p-2 text-blue-600 hover:bg-blue-50 rounded-full transition shrink-0">
-                                        <RefreshCw size={18} />
-                                        <input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
-                                    </label>
+                                    <button onClick={clearText} className="p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 rounded-full transition shrink-0"><Trash2 size={18} /></button>
+                                    <label className="cursor-pointer p-2 text-blue-600 hover:bg-blue-50 rounded-full transition shrink-0"><RefreshCw size={18} /><input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} /></label>
                                 </>
                             ) : (
-                                <label className="cursor-pointer bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm flex items-center gap-1 hover:bg-blue-700 transition shadow-sm shrink-0">
-                                    <Upload size={14} />
-                                    <span>导入</span>
-                                    <input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} />
-                                </label>
+                                <label className="cursor-pointer bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm flex items-center gap-1 hover:bg-blue-700 transition shadow-sm shrink-0"><Upload size={14} /><span>导入</span><input type="file" accept=".txt,.docx" onChange={handleFileSelect} className="hidden" ref={fileInputRef} /></label>
                             )}
-
-                            <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-gray-100 rounded-full shrink-0">
-                                <Settings size={20} className="text-gray-600" />
-                            </button>
+                            <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-gray-100 rounded-full shrink-0"><Settings size={20} className="text-gray-600" /></button>
                         </div>
                     </header>
 
@@ -437,35 +410,16 @@
                                 <p className="text-purple-800 font-medium animate-pulse">AI 正在为您撰写文章...</p>
                             </div>
                         )}
-
                         {parsedWords.length === 0 ? (
                             <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-4 mt-10">
-                                <div className="bg-white p-6 rounded-full shadow-sm">
-                                    <FileText size={48} className="text-blue-200" />
-                                </div>
-                                <div className="text-center">
-                                    <p className="text-gray-600 font-medium">开始阅读</p>
-                                    <p className="text-sm mt-1">导入文件或生成文章</p>
-                                </div>
-                                <textarea 
-                                    className="w-full max-w-lg p-4 border border-gray-200 rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
-                                    rows="6"
-                                    placeholder="或者直接在这里粘贴文章内容..."
-                                    onBlur={(e) => {
-                                        if(e.target.value.trim()) parseText(e.target.value, "Clipboard Content");
-                                    }}
-                                ></textarea>
+                                <div className="bg-white p-6 rounded-full shadow-sm"><FileText size={48} className="text-blue-200" /></div>
+                                <div className="text-center"><p className="text-gray-600 font-medium">开始阅读</p><p className="text-sm mt-1">导入文件或生成文章</p></div>
+                                <textarea className="w-full max-w-lg p-4 border border-gray-200 rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition" rows="6" placeholder="或者直接在这里粘贴文章内容..." onBlur={(e) => { if(e.target.value.trim()) parseText(e.target.value, "Clipboard Content"); }}></textarea>
                             </div>
                         ) : (
                             <div className="max-w-3xl mx-auto bg-white p-6 sm:p-10 shadow-sm rounded-xl text-lg sm:text-xl leading-loose text-gray-800 break-words w-full">
                                 {parsedWords.map((token, idx) => (
-                                    <span 
-                                        key={idx}
-                                        onClick={() => handleWordClick(token, idx)}
-                                        className={`word-span ${selectedWord?.index === idx ? 'active' : ''}`}
-                                    >
-                                        {token}
-                                    </span>
+                                    <span key={idx} onClick={() => handleWordClick(token, idx)} className={`word-span ${selectedWord?.index === idx ? 'active' : ''}`}>{token}</span>
                                 ))}
                                 <div className={`transition-all duration-300 ${selectedWord ? 'h-48' : 'h-16'}`}></div>
                             </div>
@@ -479,20 +433,12 @@
                                     <div className="flex-1 mr-4">
                                         <h3 className="text-xl font-bold text-blue-800 flex items-center gap-3">
                                             {selectedWord.word}
-                                            <button 
-                                                onClick={() => speakWord(selectedWord.word)} 
-                                                className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded-full text-blue-600 transition"
-                                            >
-                                                <Play size={16} fill="currentColor" />
-                                            </button>
+                                            <button onClick={() => speakWord(selectedWord.word)} className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded-full text-blue-600 transition"><Play size={16} fill="currentColor" /></button>
                                         </h3>
                                         <p className="text-xs text-gray-400 mt-1 line-clamp-1 italic">...{contextSentence}...</p>
                                     </div>
-                                    <button onClick={() => setSelectedWord(null)} className="text-gray-400 hover:text-gray-600 p-1">
-                                        <Icon size={20}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></Icon>
-                                    </button>
+                                    <button onClick={() => setSelectedWord(null)} className="text-gray-400 hover:text-gray-600 p-1"><Icon size={20}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></Icon></button>
                                 </div>
-                                
                                 <div className="mt-1 min-h-[3rem]">
                                     {isTranslating ? (
                                         <div className="flex items-center gap-2 text-blue-600 text-sm animate-pulse">
@@ -502,9 +448,7 @@
                                             <span className="ml-1">正在翻译...</span>
                                         </div>
                                     ) : (
-                                        <div className="text-sm sm:text-base text-gray-800 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                            {translation || "暂无翻译"}
-                                        </div>
+                                        <div className="text-sm sm:text-base text-gray-800 bg-gray-50 p-3 rounded-lg border border-gray-100 font-medium">{translation || "暂无翻译"}</div>
                                     )}
                                 </div>
                             </div>
@@ -514,24 +458,8 @@
                     {showGenerateModal && (
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
                             <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h2 className="text-lg font-bold flex items-center gap-2 text-purple-700">
-                                        <Sparkles size={20} />
-                                        AI 生成阅读材料
-                                    </h2>
-                                    <button onClick={() => setShowGenerateModal(false)} className="text-gray-400 hover:text-gray-600">✕</button>
-                                </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(level => (
-                                        <button
-                                            key={level}
-                                            onClick={() => generateArticle(level)}
-                                            className="p-3 border rounded-lg hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700 transition text-center font-semibold text-gray-700"
-                                        >
-                                            {level}
-                                        </button>
-                                    ))}
-                                </div>
+                                <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold flex items-center gap-2 text-purple-700"><Sparkles size={20} />AI 生成阅读材料</h2><button onClick={() => setShowGenerateModal(false)} className="text-gray-400 hover:text-gray-600">✕</button></div>
+                                <div className="grid grid-cols-2 gap-3">{['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(level => (<button key={level} onClick={() => generateArticle(level)} className="p-3 border rounded-lg hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700 transition text-center font-semibold text-gray-700">{level}</button>))}</div>
                             </div>
                         </div>
                     )}
@@ -539,34 +467,12 @@
                     {showSettings && (
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-2xl">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-bold flex items-center gap-2">
-                                        <Settings size={20} />
-                                        设置
-                                    </h2>
-                                    <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">✕</button>
-                                </div>
-
+                                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} />设置</h2><button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">✕</button></div>
                                 <div className="space-y-5">
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">API Key (SiliconFlow)</label>
-                                        <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">模型名称</label>
-                                        <input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如: Qwen/Qwen2.5-7B-Instruct" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/>
-                                    </div>
-                                    <div className="flex items-center gap-3 mt-4 pt-2">
-                                        <button onClick={saveSettings} className="bg-blue-600 text-white px-4 py-2.5 rounded-lg hover:bg-blue-700 flex-1 font-medium transition shadow-md shadow-blue-200">
-                                            保存并连接
-                                        </button>
-                                    </div>
-                                    {isApiValid !== null && (
-                                        <div className={`text-sm flex items-center gap-2 p-3 rounded-lg border ${isApiValid ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                                            {isApiValid ? <CheckCircle size={18}/> : <AlertCircle size={18}/>}
-                                            {isApiValid ? "API 连接成功" : "连接失败"}
-                                        </div>
-                                    )}
+                                    <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">API Key (SiliconFlow)</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
+                                    <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">模型名称</label><input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如: Qwen/Qwen2.5-7B-Instruct" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
+                                    <div className="flex items-center gap-3 mt-4 pt-2"><button onClick={saveSettings} className="bg-blue-600 text-white px-4 py-2.5 rounded-lg hover:bg-blue-700 flex-1 font-medium transition shadow-md shadow-blue-200">保存并连接</button></div>
+                                    {isApiValid !== null && (<div className={`text-sm flex items-center gap-2 p-3 rounded-lg border ${isApiValid ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{isApiValid ? <CheckCircle size={18}/> : <AlertCircle size={18}/>}{isApiValid ? "API 连接成功" : "连接失败"}</div>)}
                                 </div>
                             </div>
                         </div>
