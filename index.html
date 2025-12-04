@@ -3,21 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 沉浸式阅读器 (稳定修复版)</title>
+    <title>AI 沉浸式阅读器 (LingQ Lite)</title>
     
     <!-- 预连接音频源，加速握手 -->
     <link rel="preconnect" href="https://dict.youdao.com" crossorigin>
-    <link rel="dns-prefetch" href="https://dict.youdao.com">
-
+    
     <!-- 全局错误捕获 -->
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             console.error('Error:', msg, lineNo);
+            // 如果 React 挂了，显示错误在页面上
+            var root = document.getElementById('root');
+            if (root && root.innerText.indexOf('正在初始化') !== -1) {
+                 var errorDiv = document.createElement('div');
+                 errorDiv.style.color = 'red';
+                 errorDiv.style.padding = '20px';
+                 errorDiv.innerText = '程序启动失败: ' + msg;
+                 document.body.appendChild(errorDiv);
+            }
             return false;
         };
     </script>
 
-    <!-- 核心库 -->
+    <!-- 核心库 (unpkg) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -92,24 +100,29 @@
             const [isTranslating, setIsTranslating] = useState(false);
             const [isGenerating, setIsGenerating] = useState(false);
             const [contextSentence, setContextSentence] = useState("");
-            const [isPlaying, setIsPlaying] = useState(false); // UI反馈
+            const [isPlaying, setIsPlaying] = useState(false);
             
             const fileInputRef = useRef(null);
             const translationCacheRef = useRef(new Map());
             const abortControllerRef = useRef(null);
             
-            // --- 核心修复：单例音频 + 强行重置 ---
+            // --- 音频核心 (单例模式 + ID锁) ---
             const playerRef = useRef(null);
             const clickIdRef = useRef(0);
             const timeoutRef = useRef(null);
 
             useEffect(() => {
                 // 初始化唯一 Audio 实例
-                playerRef.current = new Audio();
-                // 绑定结束事件，用于更新UI
-                playerRef.current.onended = () => setIsPlaying(false);
-                playerRef.current.onpause = () => setIsPlaying(false);
-                playerRef.current.onplay = () => setIsPlaying(true);
+                try {
+                    playerRef.current = new Audio();
+                    playerRef.current.onended = () => setIsPlaying(false);
+                    playerRef.current.onpause = () => setIsPlaying(false);
+                    playerRef.current.onplay = () => setIsPlaying(true);
+                    // 预加载一下，激活 AudioContext
+                    playerRef.current.load();
+                } catch(e) {
+                    console.error("Audio init error", e);
+                }
 
                 const storedKey = localStorage.getItem('lingq_api_key');
                 const storedModel = localStorage.getItem('lingq_model');
@@ -137,7 +150,6 @@
 
             const getAudioUrl = (word) => {
                 const dictCode = LANG_CONFIG[currentLang].dictCode;
-                // 不加时间戳，利用浏览器缓存加速
                 if (currentLang === 'en') {
                     return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
                 } else {
@@ -145,30 +157,31 @@
                 }
             };
 
-            // --- 稳健发音逻辑 V4 ---
+            // --- 稳健发音逻辑 ---
             const speakWord = (word) => {
                 const player = playerRef.current;
                 if (!player) return;
 
-                // 1. 生成 ID，锁定当前操作
+                // 1. 生成 ID，锁定当前点击操作
                 const thisClickId = Date.now();
                 clickIdRef.current = thisClickId;
 
-                // 2. 物理重置：停止 TTS，停止 Player，断开网络
+                // 2. 物理重置：停止一切旧声音
                 if (window.speechSynthesis) window.speechSynthesis.cancel();
+                
                 player.pause();
                 player.currentTime = 0;
-                player.src = ""; // 关键：置空源
-                player.load();   // 关键：强制浏览器丢弃缓冲
+                player.src = ""; // 切断旧连接
+                player.load();   // 丢弃缓冲
 
                 if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                setIsPlaying(true); // UI 立即响应
+                setIsPlaying(true); // 立即给用户反馈
 
                 // 3. 设置新源
                 const url = getAudioUrl(word);
                 player.src = url;
                 
-                // 4. 播放 (带错误捕获)
+                // 4. 播放
                 const playPromise = player.play();
                 
                 if (playPromise !== undefined) {
@@ -185,11 +198,11 @@
 
                 // 5. 超时险 (800ms) - 极速降级
                 timeoutRef.current = setTimeout(() => {
+                    // ID 必须一致，且 player 没准备好
                     if (clickIdRef.current === thisClickId) {
-                        // 如果还在缓冲（readyState < 3），不等了，直接切 TTS
                         if (player.readyState < 3) {
-                            console.log("Network timeout (800ms), switching to TTS");
-                            player.src = ""; // 断开
+                            console.log("Network timeout, switching to TTS");
+                            player.src = ""; // 停止下载
                             fallbackTTS(word);
                         }
                     }
@@ -197,8 +210,7 @@
             };
 
             const fallbackTTS = (word) => {
-                // 双重检查 ID，防止声音乱入
-                if (clickIdRef.current !== clickIdRef.current) return;
+                if (clickIdRef.current !== clickIdRef.current) return; // ID 校验
                 
                 if (!window.speechSynthesis) {
                     setIsPlaying(false);
@@ -378,7 +390,7 @@
                         <div className="flex items-center gap-2 overflow-hidden">
                             <BookOpen className="text-blue-600 shrink-0" />
                             <div className="flex flex-col">
-                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">V4</span></h1>
+                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">Stable</span></h1>
                                 {fileName && <span className="text-xs text-gray-500 truncate max-w-[150px]">{fileName}</span>}
                             </div>
                         </div>
@@ -476,7 +488,7 @@
                     {showSettings && (
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-2xl">
-                                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} />设置</h2><button onClick={() => setShowSettings(false)} className=\"text-gray-400 hover:text-gray-600\">✕</button></div>
+                                <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} />设置</h2><button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">✕</button></div>
                                 <div className="space-y-5">
                                     <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">API Key (SiliconFlow)</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
                                     <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">模型名称</label><input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如: Qwen/Qwen2.5-7B-Instruct" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition"/></div>
