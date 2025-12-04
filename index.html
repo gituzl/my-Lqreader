@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 沉浸式阅读器 (LingQ Lite)</title>
+    <title>AI 沉浸式阅读器 (LingQ Lite) - 极速版</title>
     
     <!-- 全局错误捕获 -->
     <script>
@@ -22,12 +22,14 @@
 
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-        .word-span { cursor: pointer; border-radius: 4px; padding: 0 2px; transition: all 0.2s; display: inline-block; }
+        .word-span { cursor: pointer; border-radius: 4px; padding: 0 2px; transition: all 0.1s; display: inline-block; }
         .word-span:hover { background-color: #e5e7eb; }
         .word-span.active { background-color: #fde047; color: #000; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden">
@@ -35,7 +37,7 @@
     <div id="root" class="h-full w-full">
         <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #666;">
             <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-            <p style="margin-top: 10px; font-size: 14px;">正在加载资源...</p>
+            <p style="margin-top: 10px; font-size: 14px;">正在初始化...</p>
         </div>
     </div>
 
@@ -87,7 +89,11 @@
             const [contextSentence, setContextSentence] = useState("");
             
             const fileInputRef = useRef(null);
-            const translationCacheRef = useRef({});
+            
+            // 优化1：翻译缓存，Map 比 Object 性能稍好且更符合语义
+            const translationCacheRef = useRef(new Map());
+            // 优化2：AbortController 用于取消之前的请求
+            const abortControllerRef = useRef(null);
             
             // --- 核心修复：单例音频播放器 ---
             const playerRef = useRef(null);
@@ -118,12 +124,14 @@
                 setFileName(name);
                 setSelectedWord(null); 
                 setTranslation("");
-                // 移除预加载逻辑，避免网络拥塞
+                // 清理之前的翻译缓存，因为上下文变了
+                translationCacheRef.current.clear();
             };
 
             const getAudioUrl = (word) => {
                 const dictCode = LANG_CONFIG[currentLang].dictCode;
-                // 添加随机参数防止浏览器强缓存导致的某种卡死（可选）
+                // 添加时间戳防止浏览器强缓存导致的资源加载假死
+                const ts = new Date().getTime();
                 if (currentLang === 'en') {
                     return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`;
                 } else {
@@ -136,42 +144,43 @@
                 const player = playerRef.current;
                 if (!player) return;
 
-                // 1. 强制停止上一个声音
+                // 1. 强制停止上一个声音，防止声音重叠
                 player.pause();
                 player.currentTime = 0;
                 
                 // 清除之前的超时计时器
                 if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
+                // 2. 设置新源并强制加载 (load() 是解决部分设备无声的关键)
                 const url = getAudioUrl(word);
                 player.src = url;
+                player.load();
 
-                // 2. 尝试播放
+                // 3. 尝试播放
                 const playPromise = player.play();
-
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
-                        console.log("Audio Play Interrupted or Failed:", error);
-                        // 如果网络播放失败，立即转本地 TTS
+                        console.log("Network Audio Failed:", error);
+                        // 如果网络播放失败（比如跨域或404），立即转本地 TTS
                         fallbackTTS(word);
                     });
                 }
 
-                // 3. 设置超时熔断：如果 2.5秒内没加载出来（图标卡着），强制切 TTS
+                // 4. 设置超时熔断：如果 1.2秒内没加载出来，强制切 TTS (比之前的 2.5秒更快，体验更流畅)
                 timeoutRef.current = setTimeout(() => {
-                    if (player.readyState < 2) { // 还没准备好
+                    // readyState < 2 意味着数据还没准备好播放
+                    if (player.readyState < 2) { 
                         console.log("Network timeout, switching to TTS");
                         player.pause(); // 停止下载
-                        player.src = ""; // 断开连接
+                        // 触发 TTS
                         fallbackTTS(word);
                     }
-                }, 2500);
+                }, 1200);
             };
 
             const fallbackTTS = (word) => {
                 if (!window.speechSynthesis) return;
-                // 确保 TTS 也不重叠
-                window.speechSynthesis.cancel();
+                window.speechSynthesis.cancel(); // 停止之前的 TTS
                 const utterance = new SpeechSynthesisUtterance(word);
                 utterance.lang = LANG_CONFIG[currentLang].code;
                 utterance.rate = 1.0; 
@@ -210,7 +219,7 @@
                     setText("");
                     setFileName("");
                     setSelectedWord(null);
-                    translationCacheRef.current = {};
+                    translationCacheRef.current.clear();
                 }
             };
 
@@ -229,7 +238,7 @@
 
                 try {
                     const targetLangName = LANG_CONFIG[currentLang].name;
-                    const prompt = `Write an interesting article or short story in ${targetLangName} (Target Language) suitable for CEFR Level ${level}. Length: approximately 280 to 500 words. Topic: Daily life, culture, or an engaging story. Format: Plain text only.`;
+                    const prompt = `Write a short story in ${targetLangName} (CEFR Level ${level}). Length: 200-300 words. Format: Plain text only. No markdown.`;
 
                     const response = await fetch(DEFAULT_API_URL, {
                         method: 'POST',
@@ -259,31 +268,34 @@
             };
 
             const translateWord = async (word, context) => {
-                const cacheKey = `${word}-${currentLang}`;
-                if (translationCacheRef.current[cacheKey]) {
-                    setTranslation(translationCacheRef.current[cacheKey]);
+                setTranslation("");
+                setIsTranslating(true);
+
+                // 1. 检查缓存
+                const cacheKey = `${currentLang}_${word.toLowerCase()}`;
+                if (translationCacheRef.current.has(cacheKey)) {
+                    setTranslation(translationCacheRef.current.get(cacheKey));
                     setIsTranslating(false); 
                     return;
                 }
 
-                setIsTranslating(true);
-                setTranslation("");
-                
                 if (!apiKey) {
                     setTranslation("请配置 API Key");
                     setIsTranslating(false);
                     return;
                 }
 
+                // 2. 关键优化：取消上一次未完成的请求
+                if (abortControllerRef.current) {
+                    abortControllerRef.current.abort();
+                }
+                // 创建新的控制器
+                const abortController = new AbortController();
+                abortControllerRef.current = abortController;
+
                 try {
-                    const prompt = `
-                    Role: Dictionary.
-                    Context: "...${context}..."
-                    Target Word: "${word}"
-                    Task: Translate the "Target Word" into Simplified Chinese. Use the context ONLY to select the correct meaning.
-                    Constraint: Output ONLY the definition. Do NOT translate the whole sentence.
-                    Format: [Part of Speech] Meaning.
-                    `;
+                    // 3. 简化 Prompt，加快 AI 响应速度
+                    const prompt = `Translate "${word}" to Simplified Chinese. Concise. No explanations.`;
 
                     const response = await fetch(DEFAULT_API_URL, {
                         method: 'POST',
@@ -291,11 +303,13 @@
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${apiKey}`
                         },
+                        // 绑定 signal
+                        signal: abortController.signal,
                         body: JSON.stringify({
                             model: model,
                             messages: [{ role: "user", content: prompt }],
                             temperature: 0.1, 
-                            max_tokens: 60
+                            max_tokens: 30
                         })
                     });
 
@@ -303,13 +317,22 @@
                     const data = await response.json();
                     const resultText = data.choices[0].message.content.trim();
                     
-                    translationCacheRef.current[cacheKey] = resultText;
+                    // 写入缓存
+                    translationCacheRef.current.set(cacheKey, resultText);
                     setTranslation(resultText);
 
                 } catch (error) {
-                    setTranslation("翻译服务繁忙");
+                    if (error.name === 'AbortError') {
+                        // 忽略被取消的请求，不更新UI
+                        return;
+                    }
+                    console.error("Translation error:", error);
+                    setTranslation("翻译出错");
                 } finally {
-                    setIsTranslating(false);
+                    // 只有当当前控制器仍然是最新的时候，才关闭 loading 状态
+                    if (abortControllerRef.current === abortController) {
+                        setIsTranslating(false);
+                    }
                 }
             };
 
@@ -360,7 +383,7 @@
                         <div className="flex items-center gap-2 overflow-hidden">
                             <BookOpen className="text-blue-600 shrink-0" />
                             <div className="flex flex-col">
-                                <h1 className="text-base font-bold leading-tight">AI Reader</h1>
+                                <h1 className="text-base font-bold leading-tight">AI Reader <span className="text-xs text-green-600 font-normal border border-green-200 bg-green-50 px-1 rounded ml-1">Turbo</span></h1>
                                 {fileName && <span className="text-xs text-gray-500 truncate max-w-[150px]">{fileName}</span>}
                             </div>
                         </div>
@@ -368,7 +391,10 @@
                         <div className="flex items-center gap-2">
                             <select 
                                 value={currentLang} 
-                                onChange={(e) => setCurrentLang(e.target.value)}
+                                onChange={(e) => {
+                                    setCurrentLang(e.target.value);
+                                    translationCacheRef.current.clear();
+                                }}
                                 className="bg-gray-100 border-none rounded text-xs py-1 px-2 focus:ring-2 focus:ring-blue-500 shrink-0"
                             >
                                 {Object.entries(LANG_CONFIG).map(([key, conf]) => (
